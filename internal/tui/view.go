@@ -183,6 +183,12 @@ func (m Model) statusKeys() (string, style.Style, [][2]string) {
 	case m.mode == modeHelp:
 		modeName, modeSt = "HELP", style.New().Background(colBlue).Foreground(colInk).Bold(true)
 		keys = [][2]string{{"esc", "back"}}
+	case m.mode == modeRunning && m.run != nil:
+		modeName, modeSt = "RUNNING", stLogo
+		if m.run.finished {
+			modeName, modeSt = "DONE", stTabActive
+		}
+		keys = m.runKeys()
 	case m.mode == modeDetail:
 		modeName = "ZOOM"
 		keys = [][2]string{{"esc", "back"}, {"d", "remove"}}
@@ -597,6 +603,8 @@ func (m Model) floating() (string, []string, bool) {
 		return "Clean up", m.dialogLines(), true
 	case m.mode == modeHelp:
 		return "Help", helpLines(), true
+	case m.mode == modeRunning && m.run != nil:
+		return m.run.title, m.runLines(), true
 	}
 	return "", nil, false
 }
@@ -738,8 +746,8 @@ func helpLines() []string {
 		lines = append(lines, paint(stKey, fit(r[0], 22))+r[1])
 	}
 	return append(lines, "",
-		paint(stDim, "Removing or cleaning shows a confirmation first, then runs brew in"),
-		paint(stDim, "the normal terminal so you can see its output, and rescans afterwards."))
+		paint(stDim, "Removing or cleaning shows a confirmation first, then runs brew in a"),
+		paint(stDim, "progress pane, one package at a time; esc stops after the current one."))
 }
 
 // neededLabel fits "first-dependent +N" into w columns, shortening the name

@@ -53,6 +53,8 @@ func (m Model) handleMouse(ev mouseMsg) (Model, tea.Cmd) {
 		return m, nil
 	case modeDialog:
 		return m.mouseDialog(ev)
+	case modeRunning:
+		return m.mouseRun(ev)
 	case modeList, modeSearch:
 		return m.mouseList(ev, g)
 	}
@@ -189,20 +191,49 @@ func (m Model) mouseDialog(ev mouseMsg) (Model, tea.Cmd) {
 
 // pressStatusKey treats a click on a status-bar hint as pressing that key.
 func (m Model) pressStatusKey(x int) (Model, tea.Cmd) {
-	var k tea.KeyMsg
-	switch name := m.statusHit(x); name {
-	case "", "↑↓", "type", "1-3":
-		return m, nil
-	case "space":
-		k = tea.KeyMsg{Type: tea.KeySpace}
-	case "enter":
-		k = tea.KeyMsg{Type: tea.KeyEnter}
-	case "esc":
-		k = tea.KeyMsg{Type: tea.KeyEsc}
-	default:
-		k = tea.KeyMsg{Type: tea.KeyRune, Rune: []rune(name)[0]}
+	if k, ok := keyFor(m.statusHit(x)); ok {
+		return m.handleKey(k)
 	}
-	return m.handleKey(k)
+	return m, nil
+}
+
+// keyFor maps a key hint's name to the key it stands for.
+func keyFor(name string) (tea.KeyMsg, bool) {
+	switch name {
+	case "", "↑↓", "type", "1-3":
+		return tea.KeyMsg{}, false
+	case "space":
+		return tea.KeyMsg{Type: tea.KeySpace}, true
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}, true
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}, true
+	case "ctrl+c":
+		return tea.KeyMsg{Type: tea.KeyCtrlC}, true
+	}
+	return tea.KeyMsg{Type: tea.KeyRune, Rune: []rune(name)[0]}, true
+}
+
+// mouseRun handles clicks on the progress pane's buttons; once it has
+// finished, a click outside closes it.
+func (m Model) mouseRun(ev mouseMsg) (Model, tea.Cmd) {
+	if ev.Button != btnLeft || m.run == nil {
+		return m, nil
+	}
+	content := m.runLines()
+	x, y, w, h := m.floatRect(content)
+	if ev.X < x || ev.X >= x+w || ev.Y < y || ev.Y >= y+h {
+		if m.run.finished {
+			return m.closeRun()
+		}
+		return m, nil
+	}
+	if ev.Y-y-1 == len(content)-1 {
+		if k, ok := keyFor(pillHit(m.runKeys(), ev.X-x-2)); ok {
+			return m.keyRun(k)
+		}
+	}
+	return m, nil
 }
 
 // dragThumb moves the list so the thumb sits under the pointer.

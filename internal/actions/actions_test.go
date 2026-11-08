@@ -23,16 +23,19 @@ func TestPlanRemovalBlocksNeededFormulae(t *testing.T) {
 	if len(r.Steps) != 2 {
 		t.Fatalf("got %d steps, want 2", len(r.Steps))
 	}
-	if want := []string{"uninstall", "--formula", "curl"}; !reflect.DeepEqual(r.Steps[0].Brew, want) {
-		t.Errorf("formula step = %v, want %v", r.Steps[0].Brew, want)
+	if want := []string{"uninstall", "--cask", "--zap", "calibre"}; !reflect.DeepEqual(r.Steps[0].Brew, want) {
+		t.Errorf("cask step (first) = %v, want %v", r.Steps[0].Brew, want)
 	}
-	if want := []string{"uninstall", "--cask", "--zap", "calibre"}; !reflect.DeepEqual(r.Steps[1].Brew, want) {
-		t.Errorf("cask step = %v, want %v", r.Steps[1].Brew, want)
+	if want := []string{"uninstall", "--formula", "curl"}; !reflect.DeepEqual(r.Steps[1].Brew, want) {
+		t.Errorf("formula step = %v, want %v", r.Steps[1].Brew, want)
 	}
 
 	r = PlanRemoval([]*analyze.Package{openssl, curl}, RemoveOptions{IgnoreDependencies: true})
 	if len(r.Blocked) != 0 || r.Steps[0].Bytes != 15 {
 		t.Errorf("with IgnoreDependencies: blocked=%v bytes=%d", r.Blocked, r.Steps[0].Bytes)
+	}
+	if got := r.Steps[0].Tasks[1].Brew; !reflect.DeepEqual(got, []string{"uninstall", "--formula", "--ignore-dependencies", "openssl"}) {
+		t.Errorf("openssl task (after curl, which needs it) = %v", got)
 	}
 }
 
@@ -99,5 +102,62 @@ func TestParseCategories(t *testing.T) {
 	}
 	if _, err := ParseCategories("everything"); err == nil {
 		t.Error("expected error")
+	}
+}
+
+func TestRemovalTasksRunDependentsFirst(t *testing.T) {
+	// wget → curl → openssl, all chosen, plus a cask.
+	openssl := &analyze.Package{Name: "openssl", Kind: analyze.KindFormula, SizeBytes: 3, AllDependents: []string{"curl", "wget"}}
+	curl := &analyze.Package{Name: "curl", Kind: analyze.KindFormula, SizeBytes: 2, AllDependents: []string{"wget"}}
+	wget := &analyze.Package{Name: "wget", Kind: analyze.KindFormula, SizeBytes: 1}
+	app := &analyze.Package{Name: "calibre", Kind: analyze.KindCask, SizeBytes: 9}
+
+	r := PlanRemoval([]*analyze.Package{openssl, curl, wget, app}, RemoveOptions{})
+	var order []string
+	for _, task := range AllTasks(r.Steps) {
+		order = append(order, task.Label)
+		if want := task.Label; task.Brew[len(task.Brew)-1] != want {
+			t.Errorf("task %s runs %v", want, task.Brew)
+		}
+	}
+	if want := []string{"calibre", "wget", "curl", "openssl"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+func TestCleanupTasks(t *testing.T) {
+	pkgs := []*analyze.Package{
+		{Name: "go", Kind: analyze.KindFormula, OldVersions: 2, ReclaimableBytes: 400},
+		{Name: "xz", Kind: analyze.KindFormula, OldVersions: 1, ReclaimableBytes: 4},
+		{Name: "leftover", Kind: analyze.KindFormula, Orphan: true, SizeBytes: 30},
+		{Name: "calibre", Kind: analyze.KindCask, SizeBytes: 250, OldVersions: 1, ReclaimableBytes: 200,
+			OldPaths: []string{"/opt/homebrew/Caskroom/calibre/6.29.0"}, MissingApps: []string{"/Applications/calibre.app"}},
+	}
+	var cmds []string
+	var total int64
+	for _, task := range AllTasks(PlanCleanup(pkgs, Categories)) {
+		cmds = append(cmds, task.Command())
+		total += task.Bytes
+	}
+	want := []string{
+		"brew cleanup go", "brew cleanup xz",
+		"rm -rf /opt/homebrew/Caskroom/calibre/6.29.0",
+		"brew autoremove",
+		"brew uninstall --cask calibre",
+	}
+	if !reflect.DeepEqual(cmds, want) {
+		t.Errorf("tasks = %q\nwant %q", cmds, want)
+	}
+	if total != TotalBytes(PlanCleanup(pkgs, Categories)) {
+		t.Errorf("task bytes %d don't add up to the steps'", total)
+	}
+}
+
+func TestNeedsTerminal(t *testing.T) {
+	if !NeedsTerminal("==> Uninstalling Cask macfuse\nsudo: a terminal is required to read the password") {
+		t.Error("sudo without a tty should need a terminal")
+	}
+	if NeedsTerminal("Error: No such keg: /opt/homebrew/Cellar/foo") {
+		t.Error("an ordinary error shouldn't")
 	}
 }

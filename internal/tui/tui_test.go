@@ -2,12 +2,15 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "github.com/phoenix-tui/phoenix/tea"
 
+	"github.com/BoxingOctopusCreative/brewdust/internal/actions"
 	"github.com/BoxingOctopusCreative/brewdust/internal/analyze"
 	"github.com/BoxingOctopusCreative/brewdust/internal/app"
 )
@@ -144,5 +147,50 @@ func TestNeededLabelKeepsCount(t *testing.T) {
 	}
 	if got := neededLabel(&analyze.Package{}, 6); got != "—     " {
 		t.Errorf("none = %q", got)
+	}
+}
+
+func TestRunProgressEvents(t *testing.T) {
+	m := loaded(t, 3)
+	ch := make(chan any)
+	rs := &runState{title: "Removing packages", started: time.Now(), stop: &atomic.Bool{}, events: ch}
+	for _, name := range []string{"a", "b", "c"} {
+		rs.tasks = append(rs.tasks, taskState{task: actions.Task{Label: name, Action: "Uninstalling", Bytes: 100}})
+	}
+	m.run, m.mode = rs, modeRunning
+
+	m, _ = m.handleRunEvent(evStart{0})
+	m, _ = m.handleRunEvent(evLine{"==> Uninstalling a"})
+	m, _ = m.handleRunEvent(evDone{i: 0})
+	m, _ = m.handleRunEvent(evStart{1})
+	m, _ = m.handleRunEvent(evDone{i: 1, err: errors.New("exit status 1"),
+		output: "==> Uninstalling b\nsudo: a terminal is required to read the password\n"})
+
+	// Esc while running asks to stop rather than closing or quitting.
+	m, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil || !m.run.stop.Load() || m.mode != modeRunning {
+		t.Fatalf("esc should request a stop: stop=%v mode=%v", m.run.stop.Load(), m.mode)
+	}
+	m, _ = m.handleRunEvent(evEnd{})
+
+	ok, failed, skipped, freed := m.run.counts()
+	if ok != 1 || failed != 1 || skipped != 1 || freed != 100 {
+		t.Errorf("counts = %d ok, %d failed, %d skipped, %d freed", ok, failed, skipped, freed)
+	}
+	b := m.run.tasks[1]
+	if !b.needsTTY || !strings.Contains(b.err, "terminal is required") {
+		t.Errorf("failed task: needsTTY=%v err=%q", b.needsTTY, b.err)
+	}
+	view := m.View()
+	for _, want := range []string{"Stopped after 2 of 3", "retry failed in terminal", "need your password"} {
+		if !strings.Contains(stripANSI(view), want) {
+			t.Errorf("view missing %q", want)
+		}
+	}
+
+	// Enter closes and rescans.
+	m, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.run != nil || m.mode != modeLoading || cmd == nil || !strings.Contains(m.status, "1 failed") {
+		t.Errorf("close: run=%v mode=%v status=%q", m.run, m.mode, m.status)
 	}
 }

@@ -21,6 +21,7 @@ const (
 	modeDetail
 	modeDialog
 	modeHelp
+	modeRunning // the progress pane for removal or cleanup
 )
 
 type dialogKind int
@@ -77,6 +78,7 @@ type Model struct {
 	marked map[string]bool
 
 	dlg *dialog
+	run *runState
 
 	drag        dragState
 	lastClick   int // row index of the last click, for double-click
@@ -111,7 +113,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case spinMsg:
-		if m.mode == modeLoading {
+		if m.mode == modeLoading || (m.mode == modeRunning && m.run != nil && !m.run.finished) {
 			m.spinner++
 			return m, spin()
 		}
@@ -157,6 +159,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case mouseMsg:
 		return m.handleMouse(msg)
+
+	case runEventMsg:
+		return m.handleRunEvent(msg.ev)
 	}
 	return m, nil
 }
@@ -166,6 +171,9 @@ func isQuit(k tea.KeyMsg) bool {
 }
 
 func (m Model) handleKey(k tea.KeyMsg) (Model, tea.Cmd) {
+	if m.mode == modeRunning && m.run != nil {
+		return m.keyRun(k) // ctrl+c there means "stop", not "quit"
+	}
 	if isQuit(k) {
 		return m, tea.Quit()
 	}
@@ -321,14 +329,14 @@ func (m Model) keyDialog(k tea.KeyMsg) (Model, tea.Cmd) {
 		if len(d.steps) == 0 {
 			return m, nil
 		}
-		steps := d.steps
-		if d.kind == dialogRemove {
-			for _, p := range d.targets {
-				delete(m.marked, key(p))
-			}
+		// Marks stay put: the rescan afterwards drops those that were removed,
+		// so anything that failed is still marked for another try.
+		title := "Removing packages"
+		if d.kind == dialogClean {
+			title = "Cleaning up"
 		}
 		m.dlg, m.mode = nil, modeList
-		return m, m.execute(steps)
+		return m.startRun(title, d.steps)
 	case k.Type == tea.KeyRune && d.kind == dialogRemove && k.Rune == 'z':
 		d.zap = !d.zap
 		m.planRemove()

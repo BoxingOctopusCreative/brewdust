@@ -85,9 +85,20 @@ pane on ones shorter than 24 rows.
 
 Removing or cleaning up always shows a confirmation listing exactly what will
 run and roughly how much space it frees. Formulae that something else still
-needs are skipped, with the reason. When you confirm, brewdust hands the
-terminal over to `brew` so you can see its output and answer any prompts (e.g.
-`sudo` for pkg-based casks), then rescans.
+needs are skipped, with the reason.
+
+When you confirm, the work runs inside the interface, in a floating progress
+pane: one package at a time (dependents before what they depend on, so brew's
+checks pass), with a progress bar, space freed so far, a ✓/✗ per package and
+the tail of brew's output. `esc` stops after the current package rather than
+interrupting brew mid-uninstall. Afterwards brewdust rescans; anything that
+failed stays marked.
+
+brew runs detached from the terminal so it can't scribble over the interface.
+The catch is that it can't ask for a password either: a few pkg-based casks
+(e.g. macfuse) need `sudo` to uninstall. Those steps fail with a note, and
+pressing `t` re-runs just the failed ones in the terminal, where brew can
+prompt; press Enter afterwards to come back.
 
 The mouse works too:
 

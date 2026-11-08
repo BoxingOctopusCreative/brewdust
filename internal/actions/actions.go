@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/BoxingOctopusCreative/brewdust/internal/analyze"
 	"github.com/BoxingOctopusCreative/brewdust/internal/brew"
@@ -26,6 +27,9 @@ type Step struct {
 	Bytes    int64    // estimated space freed
 	Brew     []string // brew arguments, when the step is a brew command
 	Paths    []string // directories to delete, when the step isn't
+	// Tasks is the same work split per package, in an order that runs
+	// cleanly one at a time; the TUI uses it to show progress.
+	Tasks []Task
 }
 
 // Command describes the step as a shell-like line.
@@ -96,35 +100,50 @@ func PlanRemoval(pkgs []*analyze.Package, opt RemoveOptions) Removal {
 		formulae = append(formulae, p)
 	}
 
-	if len(formulae) > 0 {
-		args := []string{"uninstall", "--formula"}
-		if opt.IgnoreDependencies {
-			args = append(args, "--ignore-dependencies")
+	// Removed one at a time, a formula must go after everything chosen that
+	// depends on it, or brew refuses. A formula's chosen dependents are a
+	// strict superset of each of theirs, so fewer-first is a valid order.
+	inSet := func(p *analyze.Package) int {
+		n := 0
+		for _, d := range p.AllDependents {
+			if chosen[d] {
+				n++
+			}
 		}
-		s := Step{Title: fmt.Sprintf("Uninstall %d formula(e)", len(formulae))}
-		for _, p := range formulae {
-			args = append(args, p.Name)
-			s.Items = append(s.Items, p.Name)
-			s.Bytes += p.SizeBytes
-		}
-		s.Brew = args
-		r.Steps = append(r.Steps, s)
+		return n
 	}
+	sort.SliceStable(formulae, func(i, j int) bool { return inSet(formulae[i]) < inSet(formulae[j]) })
+
+	// Casks first: they can depend on formulae, never the other way round.
 	if len(casks) > 0 {
-		args := []string{"uninstall", "--cask"}
+		flags := []string{"uninstall", "--cask"}
 		if opt.Zap {
-			args = append(args, "--zap")
+			flags = append(flags, "--zap")
 		}
-		s := Step{Title: fmt.Sprintf("Uninstall %d cask(s)", len(casks))}
-		for _, p := range casks {
-			args = append(args, p.Name)
-			s.Items = append(s.Items, p.Name)
-			s.Bytes += p.SizeBytes
+		r.Steps = append(r.Steps, uninstallStep(fmt.Sprintf("Uninstall %d cask(s)", len(casks)), flags, casks))
+	}
+	if len(formulae) > 0 {
+		flags := []string{"uninstall", "--formula"}
+		if opt.IgnoreDependencies {
+			flags = append(flags, "--ignore-dependencies")
 		}
-		s.Brew = args
-		r.Steps = append(r.Steps, s)
+		r.Steps = append(r.Steps, uninstallStep(fmt.Sprintf("Uninstall %d formula(e)", len(formulae)), flags, formulae))
 	}
 	return r
+}
+
+func uninstallStep(title string, flags []string, pkgs []*analyze.Package) Step {
+	s := Step{Title: title, Brew: append([]string(nil), flags...)}
+	for _, p := range pkgs {
+		s.Brew = append(s.Brew, p.Name)
+		s.Items = append(s.Items, p.Name)
+		s.Bytes += p.SizeBytes
+		s.Tasks = append(s.Tasks, Task{
+			Label: p.Name, Action: "Uninstalling", Bytes: p.SizeBytes,
+			Brew: append(append([]string(nil), flags...), p.Name),
+		})
+	}
+	return s
 }
 
 // Category is a kind of cleanup.
@@ -191,10 +210,14 @@ func PlanCleanup(pkgs []*analyze.Package, cats []Category) []Step {
 				kegs.Brew = append(kegs.Brew, p.Name)
 				kegs.Items = append(kegs.Items, p.Name)
 				kegs.Bytes += p.ReclaimableBytes
+				kegs.Tasks = append(kegs.Tasks, Task{Label: p.Name, Action: "Removing old versions of",
+					Bytes: p.ReclaimableBytes, Brew: []string{"cleanup", p.Name}})
 			} else {
 				rooms.Paths = append(rooms.Paths, p.OldPaths...)
 				rooms.Items = append(rooms.Items, p.OldPaths...)
 				rooms.Bytes += p.ReclaimableBytes
+				rooms.Tasks = append(rooms.Tasks, Task{Label: p.Name, Action: "Removing stale Caskroom versions of",
+					Bytes: p.ReclaimableBytes, Paths: p.OldPaths})
 			}
 		}
 		if len(kegs.Items) > 0 {
@@ -213,6 +236,8 @@ func PlanCleanup(pkgs []*analyze.Package, cats []Category) []Step {
 			}
 		}
 		if len(s.Items) > 0 {
+			s.Tasks = []Task{{Label: fmt.Sprintf("%d orphaned dependencies", len(s.Items)), Action: "Removing",
+				Bytes: s.Bytes, Brew: []string{"autoremove"}}}
 			steps = append(steps, s)
 		}
 	}
@@ -223,6 +248,8 @@ func PlanCleanup(pkgs []*analyze.Package, cats []Category) []Step {
 				s.Brew = append(s.Brew, p.Name)
 				s.Items = append(s.Items, p.Name)
 				s.Bytes += p.SizeBytes - p.ReclaimableBytes // leftovers counted under old versions
+				s.Tasks = append(s.Tasks, Task{Label: p.Name, Action: "Uninstalling",
+					Bytes: p.SizeBytes - p.ReclaimableBytes, Brew: []string{"uninstall", "--cask", p.Name}})
 			}
 		}
 		if len(s.Items) > 0 {
@@ -232,19 +259,37 @@ func PlanCleanup(pkgs []*analyze.Package, cats []Category) []Step {
 	return steps
 }
 
-// Execute runs one step, streaming brew's output to out.
+// Execute runs one step in the foreground, streaming brew's output to out
+// and letting it prompt on the terminal.
 func Execute(ctx context.Context, prefix string, s Step, out io.Writer) error {
-	if len(s.Brew) > 0 {
-		cmd := brew.Command(ctx, s.Brew...)
-		cmd.Stdin = os.Stdin
+	return run(ctx, prefix, s.Brew, s.Paths, out, false)
+}
+
+// ExecuteTask runs one task. With detached set, brew gets no terminal: no
+// stdin and a new session, so a sudo password prompt fails with an error
+// (see NeedsTerminal) instead of writing over the caller's screen.
+func ExecuteTask(ctx context.Context, prefix string, t Task, out io.Writer, detached bool) error {
+	return run(ctx, prefix, t.Brew, t.Paths, out, detached)
+}
+
+func run(ctx context.Context, prefix string, brewArgs, paths []string, out io.Writer, detached bool) error {
+	if len(brewArgs) > 0 {
+		cmd := brew.Command(ctx, brewArgs...)
 		cmd.Stdout = out
 		cmd.Stderr = out
+		if detached {
+			cmd.Stdin = nil
+			cmd.Env = append(cmd.Env, "NONINTERACTIVE=1", "HOMEBREW_NO_COLOR=1")
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		} else {
+			cmd.Stdin = os.Stdin
+		}
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%s: %w", s.Command(), err)
+			return fmt.Errorf("brew %s: %w", strings.Join(brewArgs, " "), err)
 		}
 		return nil
 	}
-	for _, p := range s.Paths {
+	for _, p := range paths {
 		if err := checkCaskroomPath(prefix, p); err != nil {
 			return err
 		}
@@ -268,4 +313,47 @@ func checkCaskroomPath(prefix, p string) error {
 		return fmt.Errorf("refusing to delete %s: not a version directory under %s", p, room)
 	}
 	return nil
+}
+
+// Task is one package's share of a step.
+type Task struct {
+	Label  string // what it acts on, e.g. "qemu"
+	Action string // e.g. "Uninstalling"
+	Bytes  int64  // estimated space freed
+	Brew   []string
+	Paths  []string
+}
+
+// Command describes the task as a shell-like line.
+func (t Task) Command() string {
+	return Step{Brew: t.Brew, Paths: t.Paths}.Command()
+}
+
+// AsStep wraps a task so it can run through Execute.
+func (t Task) AsStep() Step {
+	return Step{Title: t.Action + " " + t.Label, Items: []string{t.Label}, Bytes: t.Bytes, Brew: t.Brew, Paths: t.Paths}
+}
+
+// AllTasks flattens the steps' tasks in order.
+func AllTasks(steps []Step) []Task {
+	var out []Task
+	for _, s := range steps {
+		out = append(out, s.Tasks...)
+	}
+	return out
+}
+
+// NeedsTerminal reports whether brew output shows a step failed only because
+// it had no terminal to ask for a password on.
+func NeedsTerminal(output string) bool {
+	o := strings.ToLower(output)
+	for _, sign := range []string{
+		"a terminal is required", "no tty present", "a password is required",
+		"askpass", "sudo: ", "must be run interactively",
+	} {
+		if strings.Contains(o, sign) {
+			return true
+		}
+	}
+	return false
 }
