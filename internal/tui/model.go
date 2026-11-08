@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	tea "github.com/phoenix-tui/phoenix/tea"
 
@@ -75,6 +76,10 @@ type Model struct {
 	marked map[string]bool
 
 	dlg *dialog
+
+	drag        dragState
+	lastClick   int // row index of the last click, for double-click
+	lastClickAt time.Time
 }
 
 func newModel(e *env, opt Options) Model {
@@ -90,7 +95,7 @@ func newModel(e *env, opt Options) Model {
 	if f.Requested || f.Orphans || f.Broken || f.StaleDays > 0 {
 		p = -1
 	}
-	return Model{env: e, mode: modeLoading, filter: f, preset: p, sortBy: sortBy, marked: map[string]bool{}}
+	return Model{env: e, mode: modeLoading, filter: f, preset: p, sortBy: sortBy, marked: map[string]bool{}, lastClick: -1}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -148,6 +153,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case mouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
 }
@@ -402,10 +410,15 @@ func (m *Model) refresh(keep string) {
 func (m *Model) cyclePreset() {
 	cur := m.currentKey()
 	m.preset = (m.preset + 1) % len(presets)
-	f := app.Filter{Kind: m.filter.Kind, Query: m.filter.Query, Direct: m.filter.Direct, MinBytes: m.filter.MinBytes}
+	f := m.baseFilter()
 	presets[m.preset].apply(&f)
 	m.filter = f
 	m.refresh(cur)
+}
+
+// baseFilter keeps the settings that views don't control.
+func (m Model) baseFilter() app.Filter {
+	return app.Filter{Kind: m.filter.Kind, Query: m.filter.Query, Direct: m.filter.Direct, MinBytes: m.filter.MinBytes}
 }
 
 func (m *Model) move(delta int) {

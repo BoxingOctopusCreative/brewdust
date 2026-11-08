@@ -162,8 +162,8 @@ func (m Model) tabBar(w int) string {
 	return bar(left, paint(stBarText, right), w, stBarBg)
 }
 
-// statusBar is the bottom line: a mode pill and key hints, like Zellij's.
-func (m Model) statusBar(w int) string {
+// statusKeys is the mode pill and the key hints shown for the current mode.
+func (m Model) statusKeys() (string, style.Style, [][2]string) {
 	modeName, modeSt := "NORMAL", stTabActive
 	var keys [][2]string
 	switch {
@@ -194,11 +194,32 @@ func (m Model) statusBar(w int) string {
 			{"v", "view"}, {"t", "type"}, {"s", "sort"}, {"enter", "zoom"}, {"?", "help"}, {"q", "quit"},
 		}
 	}
+	return modeName, modeSt, keys
+}
+
+// statusBar is the bottom line: a mode pill and key hints, like Zellij's.
+// The hints are clickable (see statusHit).
+func (m Model) statusBar(w int) string {
+	modeName, modeSt, keys := m.statusKeys()
 	items := []string{paint(modeSt, " "+modeName+" ")}
 	for _, k := range keys {
 		items = append(items, pill(k[0], k[1]))
 	}
 	return bar(pills(items, w, stBarBg), "", w, stBarBg)
+}
+
+// statusHit returns the key of the status-bar hint at column x, or "".
+func (m Model) statusHit(x int) string {
+	modeName, _, keys := m.statusKeys()
+	pos := uniwidth.StringWidth(" "+modeName+" ") + 1
+	for _, k := range keys {
+		w := visibleWidth(pill(k[0], k[1]))
+		if x >= pos && x < pos+w {
+			return k[0]
+		}
+		pos += w + 1
+	}
+	return ""
 }
 
 // mainPanes lays out the package list and, if there's room, the side column.
@@ -210,7 +231,7 @@ func (m Model) mainPanes(w, h int) []string {
 	}
 	diskH := 0
 	if h >= 24 {
-		diskH = 10
+		diskH = diskPaneH
 	}
 	right := m.detailPane(side, h-diskH)
 	if diskH > 0 {
@@ -310,9 +331,8 @@ func (m Model) listPane(w, h int) []string {
 	spec.body = body
 
 	// Scroll thumb on the right border, over the row area (below the header).
-	if total := len(m.rows); total > rows {
-		spec.thumbLen = max(1, rows*rows/total)
-		spec.thumbAt = 1 + (rows-spec.thumbLen)*m.offset/max(1, total-rows)
+	if at, length, ok := m.thumb(); ok {
+		spec.thumbAt, spec.thumbLen = 1+at, length // +1: below the column header
 	}
 	spec.footer = m.listFooter()
 	return pane(w, h, spec)
@@ -550,15 +570,8 @@ func (m Model) floating() (string, []string, bool) {
 // float centres a focused pane over the (dimmed) screen, like Zellij's
 // floating panes.
 func (m Model) float(base []string, title string, content []string, w, h int) []string {
-	bw := 0
-	for _, l := range content {
-		bw = max(bw, visibleWidth(l))
-	}
-	bw = min(bw+4, w-4)
-	bh := min(len(content)+2, h-chromeRows)
+	x, y, bw, bh := m.floatRect(content)
 	box := pane(bw, bh, paneSpec{title: title, focused: true, body: content})
-	x := (w - bw) / 2
-	y := 1 + (h-chromeRows-bh)/2
 	return overlay(base, box, x, y, w)
 }
 
@@ -671,8 +684,22 @@ func helpLines() []string {
 		{"esc", "clear marks, then search"},
 		{"q / ctrl+c", "quit"},
 	}
+	mouse := [][2]string{
+		{"click", "select a package (double-click to zoom)"},
+		{"right- or ctrl-click", "mark or unmark (or click the ● column)"},
+		{"shift-click", "mark everything from the selection to here"},
+		{"drag scrollbar", "scroll; click the track to jump"},
+		{"wheel", "scroll the list"},
+		{"click tab / header", "switch view / sort by that column"},
+		{"click Disk row", "clean up that category"},
+		{"click a key hint", "same as pressing it"},
+	}
 	var lines []string
 	for _, r := range rows {
+		lines = append(lines, paint(stKey, fit(r[0], 22))+r[1])
+	}
+	lines = append(lines, "", paint(stBold, "Mouse"))
+	for _, r := range mouse {
 		lines = append(lines, paint(stKey, fit(r[0], 22))+r[1])
 	}
 	return append(lines, "",

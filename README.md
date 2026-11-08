@@ -89,6 +89,23 @@ needs are skipped, with the reason. When you confirm, brewdust hands the
 terminal over to `brew` so you can see its output and answer any prompts (e.g.
 `sudo` for pkg-based casks), then rescans.
 
+The mouse works too:
+
+| Mouse | Action |
+| --- | --- |
+| Click a package | Select it; double-click to zoom its details |
+| Click the `●` column, right-click, or ctrl-click | Mark or unmark |
+| Shift-click | Mark everything from the selection to here |
+| Drag the scrollbar thumb | Scroll; click the track to jump there |
+| Wheel | Scroll the list |
+| Click a tab / column header | Switch view / sort by that column |
+| Click a row in the Disk pane | Open cleanup for just that category |
+| Click a key hint in the status bar | Same as pressing the key |
+| Click outside a floating pane | Close it |
+
+Some terminals reserve shift-click for selecting text; hold your terminal's
+override key (e.g. ⌥ in iTerm2, fn in Terminal.app) to select text instead.
+
 Filter flags (below) set the starting view, e.g. `brewdust --stale 180 --sort idle`.
 
 ## Commands

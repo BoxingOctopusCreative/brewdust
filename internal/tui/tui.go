@@ -29,6 +29,7 @@ type Options struct {
 type env struct {
 	ctx     context.Context
 	prog    *tea.Program[Model]
+	input   *ttyReader // nil if /dev/tty couldn't be opened
 	workers int
 }
 
@@ -53,17 +54,28 @@ func Run(ctx context.Context, opt Options) error {
 	m.width, m.height = termSize()
 
 	opts := []tea.Option[Model]{tea.WithAltScreen[Model]()}
-	// Give Phoenix its own handle on the terminal. os.Stdin is a blocking
-	// file that doesn't support read deadlines, so when Phoenix suspends, its
-	// pending read can't be cancelled and would swallow the next keystroke
-	// meant for brew (a sudo prompt, say) or our "press Enter". A separately
-	// opened /dev/tty is pollable, so Phoenix can cancel the read cleanly.
+	// Read input from our own /dev/tty handle rather than os.Stdin. Reading
+	// os.Stdin can't be interrupted, so when the TUI suspends for brew, a
+	// pending read would swallow the next keystroke meant for brew (a sudo
+	// prompt, say). ttyReader reads a pollable /dev/tty with deadlines, can be
+	// paused, and also extracts mouse reports, which Phoenix doesn't parse.
+	var p *tea.Program[Model]
 	if tty, err := os.Open("/dev/tty"); err == nil {
 		defer tty.Close()
-		opts = append(opts, tea.WithInput[Model](tty))
+		e.input = newTTYReader(tty, func(ev mouseMsg) {
+			if p != nil {
+				_ = p.Send(ev)
+			}
+		})
+		opts = append(opts, tea.WithInput[Model](e.input))
 	}
-	p := tea.New(m, opts...)
+	p = tea.New(m, opts...)
 	e.prog = p
+
+	if e.input != nil {
+		fmt.Fprint(os.Stdout, mouseOn)
+		defer fmt.Fprint(os.Stdout, mouseOff)
+	}
 
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
@@ -105,7 +117,12 @@ func spin() tea.Cmd {
 func (m Model) execute(steps []actions.Step) tea.Cmd {
 	e, prefix := m.env, m.snap.Prefix
 	return func() tea.Msg {
+		if e.input != nil {
+			e.input.pause()
+			fmt.Fprint(os.Stdout, mouseOff)
+		}
 		if err := e.prog.Suspend(); err != nil {
+			e.resumeInput()
 			return doneMsg{err: err}
 		}
 		out := os.Stdout
@@ -126,7 +143,20 @@ func (m Model) execute(steps []actions.Step) tea.Cmd {
 		}
 		fmt.Fprint(out, "Press Enter to return to brewdust…")
 		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
-		return doneMsg{total: len(steps), failed: failed, err: e.prog.Resume()}
+		if e.input != nil {
+			e.input.resume()
+		}
+		err := e.prog.Resume()
+		e.resumeInput()
+		return doneMsg{total: len(steps), failed: failed, err: err}
+	}
+}
+
+// resumeInput re-enables input and mouse reporting after a suspend.
+func (e *env) resumeInput() {
+	if e.input != nil {
+		e.input.resume()
+		fmt.Fprint(os.Stdout, mouseOn)
 	}
 }
 
