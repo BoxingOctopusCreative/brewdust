@@ -102,13 +102,19 @@ func ShortName(full string) string {
 	return full
 }
 
-func run(ctx context.Context, args ...string) ([]byte, error) {
+// Command builds a brew invocation that won't trigger an auto-update.
+func Command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "brew", args...)
 	cmd.Env = append(os.Environ(),
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 		"HOMEBREW_NO_ENV_HINTS=1",
 		"HOMEBREW_NO_ANALYTICS=1",
 	)
+	return cmd
+}
+
+func run(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := Command(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

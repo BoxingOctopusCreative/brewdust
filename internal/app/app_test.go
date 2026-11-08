@@ -1,4 +1,4 @@
-package main
+package app
 
 import "testing"
 
@@ -12,12 +12,12 @@ func TestParseSize(t *testing.T) {
 		"2GiB":  2e9, // treated as decimal for simplicity
 	}
 	for in, want := range cases {
-		got, err := parseSize(in)
+		got, err := ParseSize(in)
 		if err != nil || got != want {
-			t.Errorf("parseSize(%q) = %d, %v; want %d", in, got, err, want)
+			t.Errorf("ParseSize(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	if _, err := parseSize("lots"); err == nil {
+	if _, err := ParseSize("lots"); err == nil {
 		t.Error("expected error for invalid size")
 	}
 }

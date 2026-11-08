@@ -27,6 +27,7 @@ type Package struct {
 	SizeBytes        int64      `json:"size_bytes"`
 	OldVersions      int        `json:"old_versions,omitempty"`
 	ReclaimableBytes int64      `json:"reclaimable_bytes,omitempty"`
+	OldPaths         []string   `json:"old_paths,omitempty"` // non-current version directories
 	InstalledAt      time.Time  `json:"installed_at"`
 	OnRequest        bool       `json:"on_request"`
 	LastUsed         *time.Time `json:"last_used,omitempty"`
@@ -44,6 +45,9 @@ type Package struct {
 
 	deps []string
 }
+
+// Broken reports a cask whose app was deleted without `brew uninstall`.
+func (p *Package) Broken() bool { return len(p.MissingApps) > 0 }
 
 type Options struct {
 	Prefix  string
@@ -143,6 +147,7 @@ func scanFormula(p *Package, f brew.Formula, opt Options) {
 		if iv.Version != cur.Version && r.Exists {
 			p.OldVersions++
 			p.ReclaimableBytes += r.Bytes
+			p.OldPaths = append(p.OldPaths, filepath.Join(keg, iv.Version))
 		}
 		if r.LastAccess.After(time.Unix(iv.Time, 0).Add(opt.Grace)) && r.LastAccess.After(used.LastAccess) {
 			used.LastAccess, used.AccessPath = r.LastAccess, r.AccessPath
@@ -200,6 +205,7 @@ func scanCask(p *Package, c brew.Cask, opt Options) {
 		if e.Name() != c.Installed {
 			p.OldVersions++
 			p.ReclaimableBytes += r.Bytes
+			p.OldPaths = append(p.OldPaths, dir)
 		}
 		consider(r.LastAccess, "atime "+strings.TrimPrefix(r.AccessPath, room+"/"), true)
 	}

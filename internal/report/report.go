@@ -40,14 +40,16 @@ func Idle(days int) string {
 	}
 }
 
-func lastUsed(p *analyze.Package) string {
+// LastUsed formats the date a package was last used.
+func LastUsed(p *analyze.Package) string {
 	if p.LastUsed == nil {
 		return "not since install"
 	}
 	return p.LastUsed.Local().Format("2006-01-02")
 }
 
-func notes(p *analyze.Package, direct bool) string {
+// Notes summarises status flags for a package.
+func Notes(p *analyze.Package, direct bool) string {
 	var n []string
 	if p.Kind == analyze.KindFormula {
 		if p.OnRequest {
@@ -86,7 +88,7 @@ func Table(w io.Writer, pkgs []*analyze.Package, direct bool) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			p.Name, p.Kind, Bytes(p.SizeBytes),
 			p.InstalledAt.Local().Format("2006-01-02"),
-			lastUsed(p), Idle(idle), notes(p, direct))
+			LastUsed(p), Idle(idle), Notes(p, direct))
 	}
 	return tw.Flush()
 }
@@ -108,7 +110,19 @@ func Summary(w io.Writer, shown, all []*analyze.Package) {
 	}
 	fmt.Fprintf(w, "\n%d of %d packages shown, %s of %s total.\n", len(shown), len(all), Bytes(shownBytes), Bytes(allBytes))
 	if reclaim > 0 {
-		fmt.Fprintf(w, "Old versions: %s reclaimable with `brew cleanup`.\n", Bytes(reclaim))
+		fmt.Fprintf(w, "Old versions: %s reclaimable.\n", Bytes(reclaim))
+	}
+	broken := 0
+	for _, p := range all {
+		if p.Broken() {
+			broken++
+		}
+	}
+	if broken > 0 {
+		fmt.Fprintf(w, "Casks whose app was deleted outside brew: %d.\n", broken)
+	}
+	if reclaim > 0 || orphans > 0 || broken > 0 {
+		defer fmt.Fprintln(w, "Run `brewdust clean` to review and remove these.")
 	}
 	if orphans > 0 {
 		fmt.Fprintf(w, "Orphaned dependencies: %d using %s (see `brew autoremove --dry-run`).\n", orphans, Bytes(orphanBytes))
