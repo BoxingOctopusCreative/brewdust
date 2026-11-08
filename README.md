@@ -141,10 +141,16 @@ When output isn't a terminal, plain `brewdust` behaves like `brewdust list`.
 
 | Category | What | How |
 | --- | --- | --- |
-| `old` | Non-current formula versions | `brew cleanup <formula>...` |
+| `old` | Non-current formula versions | `brew cleanup <formula>...` (see note below) |
 | `old` | Stale Caskroom version directories, including interrupted `*.upgrading` ones | deleted directly, since `brew cleanup` skips them. brewdust only deletes `Caskroom/<cask>/<version>` paths |
 | `orphans` | Dependencies nothing installed needs | `brew autoremove` |
 | `broken` | Casks whose app was deleted outside brew | `brew uninstall --cask` |
+
+`brew cleanup` leaves a formula's old versions alone while it's pinned, or
+while a newer version than the one installed is available. brewdust lists
+those as "kept by brew cleanup" rather than reclaimable, leaves them out of
+the cleanup plan and totals, and shows the reason in the details pane. Run
+`brew upgrade <formula>` (or unpin it) and they become reclaimable.
 
 ### Filter flags
 

@@ -20,14 +20,19 @@ const (
 
 // Package is one installed formula or cask.
 type Package struct {
-	Name             string     `json:"name"`
-	Kind             string     `json:"kind"`
-	Version          string     `json:"version"`
-	Desc             string     `json:"desc,omitempty"`
-	SizeBytes        int64      `json:"size_bytes"`
-	OldVersions      int        `json:"old_versions,omitempty"`
-	ReclaimableBytes int64      `json:"reclaimable_bytes,omitempty"`
-	OldPaths         []string   `json:"old_paths,omitempty"` // non-current version directories
+	Name             string   `json:"name"`
+	Kind             string   `json:"kind"`
+	Version          string   `json:"version"`
+	Desc             string   `json:"desc,omitempty"`
+	SizeBytes        int64    `json:"size_bytes"`
+	OldVersions      int      `json:"old_versions,omitempty"`
+	ReclaimableBytes int64    `json:"reclaimable_bytes,omitempty"`
+	OldPaths         []string `json:"old_paths,omitempty"` // non-current version directories
+	// Old versions that `brew cleanup` won't remove yet, and why.
+	HeldVersions     int        `json:"held_versions,omitempty"`
+	HeldBytes        int64      `json:"held_bytes,omitempty"`
+	HeldPaths        []string   `json:"held_paths,omitempty"`
+	HeldReason       string     `json:"held_reason,omitempty"`
 	InstalledAt      time.Time  `json:"installed_at"`
 	OnRequest        bool       `json:"on_request"`
 	LastUsed         *time.Time `json:"last_used,omitempty"`
@@ -151,9 +156,17 @@ func scanFormula(p *Package, f brew.Formula, opt Options) {
 		p.SizeBytes += r.Bytes
 		p.ScanErrors += r.Errors
 		if iv.Version != cur.Version && r.Exists {
-			p.OldVersions++
-			p.ReclaimableBytes += r.Bytes
-			p.OldPaths = append(p.OldPaths, filepath.Join(keg, iv.Version))
+			path := filepath.Join(keg, iv.Version)
+			if reason := f.CleanupSkipReason(); reason != "" {
+				p.HeldVersions++
+				p.HeldBytes += r.Bytes
+				p.HeldPaths = append(p.HeldPaths, path)
+				p.HeldReason = reason
+			} else {
+				p.OldVersions++
+				p.ReclaimableBytes += r.Bytes
+				p.OldPaths = append(p.OldPaths, path)
+			}
 		}
 		if r.LastAccess.After(time.Unix(iv.Time, 0).Add(opt.Grace)) && r.LastAccess.After(used.LastAccess) {
 			used.LastAccess, used.AccessPath = r.LastAccess, r.AccessPath

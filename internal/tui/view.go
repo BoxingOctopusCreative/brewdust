@@ -528,6 +528,17 @@ func (m Model) detailLines(p *analyze.Package, w int, full bool) []string {
 			}
 		}
 	}
+	if p.HeldVersions > 0 {
+		add("Old vers.", fmt.Sprintf("%d · %s, kept for now", p.HeldVersions, report.Bytes(p.HeldBytes)))
+		for _, l := range wrap("brew cleanup skips these: "+p.HeldReason, vw) {
+			add("", paint(stDim, l))
+		}
+		if full {
+			for _, hp := range p.HeldPaths {
+				add("", paint(stDim, truncate(hp, vw)))
+			}
+		}
+	}
 	for _, a := range p.MissingApps {
 		add("Missing", paint(stWarn, truncate(a, vw)))
 		add("", paint(stDim, "deleted outside brew · c to clean up"))

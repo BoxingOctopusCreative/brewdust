@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BoxingOctopusCreative/brewdust/internal/brew"
 )
 
 func TestFormulaEligible(t *testing.T) {
@@ -80,5 +82,21 @@ func TestLinkDependenciesFindsDirectEdges(t *testing.T) {
 	check("someapp.Dependencies", app.Dependencies, []string{"wget"})
 	if openssl.Orphan || curl.Orphan {
 		t.Error("needed formulae shouldn't be orphans")
+	}
+}
+
+func TestCleanupSkipReason(t *testing.T) {
+	var f brew.Formula
+	if f.CleanupSkipReason() != "" {
+		t.Error("current, unpinned formula should be cleanable")
+	}
+	f.Outdated, f.Revision = true, 1
+	f.Versions.Stable = "15.0.0"
+	if got := f.CleanupSkipReason(); !strings.Contains(got, "15.0.0_1") {
+		t.Errorf("outdated reason = %q", got)
+	}
+	f.Pinned = true
+	if f.CleanupSkipReason() != "pinned" {
+		t.Error("pinned takes precedence")
 	}
 }

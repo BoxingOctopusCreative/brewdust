@@ -83,6 +83,13 @@ func Notes(p *analyze.Package, direct bool) string {
 	if p.OldVersions > 0 {
 		n = append(n, fmt.Sprintf("+%d old version(s), %s reclaimable", p.OldVersions, Bytes(p.ReclaimableBytes)))
 	}
+	if p.HeldVersions > 0 {
+		why := "until upgraded"
+		if p.HeldReason == "pinned" {
+			why = "while pinned"
+		}
+		n = append(n, fmt.Sprintf("+%d old version(s), %s kept by brew cleanup %s", p.HeldVersions, Bytes(p.HeldBytes), why))
+	}
 	if len(p.MissingApps) > 0 {
 		n = append(n, "app deleted outside brew")
 	}
@@ -108,14 +115,18 @@ func Table(w io.Writer, pkgs []*analyze.Package, direct bool) error {
 
 // Summary writes totals for the listed packages.
 func Summary(w io.Writer, shown, all []*analyze.Package) {
-	var shownBytes, allBytes, reclaim, orphanBytes int64
-	orphans := 0
+	var shownBytes, allBytes, reclaim, orphanBytes, held int64
+	orphans, heldPkgs := 0, 0
 	for _, p := range shown {
 		shownBytes += p.SizeBytes
 	}
 	for _, p := range all {
 		allBytes += p.SizeBytes
 		reclaim += p.ReclaimableBytes
+		if p.HeldVersions > 0 {
+			held += p.HeldBytes
+			heldPkgs++
+		}
 		if p.Orphan {
 			orphans++
 			orphanBytes += p.SizeBytes
@@ -124,6 +135,10 @@ func Summary(w io.Writer, shown, all []*analyze.Package) {
 	fmt.Fprintf(w, "\n%d of %d packages shown, %s of %s total.\n", len(shown), len(all), Bytes(shownBytes), Bytes(allBytes))
 	if reclaim > 0 {
 		fmt.Fprintf(w, "Old versions: %s reclaimable.\n", Bytes(reclaim))
+	}
+	if held > 0 {
+		fmt.Fprintf(w, "Old versions brew cleanup won't remove yet: %s in %d outdated or pinned formula(e) (`brew upgrade` first).\n",
+			Bytes(held), heldPkgs)
 	}
 	broken := 0
 	for _, p := range all {

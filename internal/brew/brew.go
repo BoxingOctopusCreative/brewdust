@@ -24,6 +24,34 @@ type Formula struct {
 	KegOnly   bool               `json:"keg_only"`
 	LinkedKeg string             `json:"linked_keg"`
 	Installed []InstalledVersion `json:"installed"`
+	Outdated  bool               `json:"outdated"`
+	Pinned    bool               `json:"pinned"`
+	Revision  int                `json:"revision"`
+	Versions  struct {
+		Stable string `json:"stable"`
+	} `json:"versions"`
+}
+
+// LatestVersion is the newest version brew knows of, as brew writes it
+// ("15.0.0_1" when the formula has a revision).
+func (f Formula) LatestVersion() string {
+	if f.Revision > 0 {
+		return fmt.Sprintf("%s_%d", f.Versions.Stable, f.Revision)
+	}
+	return f.Versions.Stable
+}
+
+// CleanupSkipReason says why `brew cleanup` won't remove this formula's old
+// versions, or "" if it will. brew skips pinned formulae and ones whose
+// newest version isn't installed.
+func (f Formula) CleanupSkipReason() string {
+	switch {
+	case f.Pinned:
+		return "pinned"
+	case f.Outdated:
+		return "newer version " + f.LatestVersion() + " not installed; brew upgrade first"
+	}
+	return ""
 }
 
 type InstalledVersion struct {
