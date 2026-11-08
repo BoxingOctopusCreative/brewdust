@@ -6,15 +6,36 @@ remove what you don't need, including the leftovers Homebrew doesn't clean up
 on its own.
 
 ```
-brewdust  429 packages · 21.4 GB · 6.8 GB in old versions
-view all  │  type all  │  sort size
-  NAME            KIND          SIZE  LAST USED     IDLE  NOTES
-  go@1.25         formula     6.1 GB  2026-11-08   today  requested; +2 old version(s), 4.6 GB reclaimable
-● calibre         cask        1.9 GB  —             2.7y  +2 old version(s), 1.9 GB reclaimable; app deleted outside brew
-  llvm@22         formula     1.6 GB  —              2mo  dep of 1; active via rust
-● qemu            formula   729.5 MB  —              2mo  requested
-2 marked · 2.6 GB  (d to remove, a to toggle all shown, esc to clear)
-↑↓ move · space mark · d remove · c clean up · / search · v view · t type · s sort · enter details · ? help · q quit
+ brewdust   all   requested   idle ≥ 90d   idle ≥ 1y   orphans   broken casks                                429 packages · 21.4 GB
+╭─ Packages · by size ─────────────────────────────────────────────────────────── 6/429 ─╮╭─ Details · ansible ────────────────────╮
+│   NAME                       KIND          SIZE         LAST USED     IDLE  NOTES      ││ ansible  formula 14.3.1                │
+│   go@1.25                    formula     6.1 GB ██████  2026-11-08   today  requested… ┃│ Automate deployment, configuration,    │
+│   calibre                    cask        1.9 GB █████▍  —             2.7y  +2 old ve… ││ and upgrading                          │
+│ ● llvm@22                    formula     1.6 GB █████▎  —              2mo  dep of 1;… ││                                        │
+│   qemu                       formula   729.5 MB ████▊─  —              2mo  requested  ││ Size         551.2 MB ████████████▌─── │
+│ ● podman-desktop             cask      552.7 MB ████▋─  2026-11-07   today             ││ Idle              2mo █▋────────────── │
+│   ansible                    formula   551.2 MB ████▋─  2026-08-21     2mo  requested  ││ Last used   2026-08-21 15:18           │
+│   gcc                        formula   503.9 MB ████▋─  —              2mo  requested  ││             atime 14.3.1/libexec/lib/… │
+│   rust                       formula   458.2 MB ████▌─  —              2mo  requested  ││ Installed   2026-08-21                 │
+│   qtwebengine                formula   394.0 MB ████▌─  —              3mo  dep of 2;… ││ Source      installed by you           │
+│   balenaetcher               cask      392.5 MB ████▌─  2026-11-05      2d             ││                                        │
+│   azure-cli                  formula   377.4 MB ████▍─  2026-10-03     35d  requested  ││                                        │
+│   mono                       formula   325.1 MB ████▍─  —             18mo  requested  ││                                        │
+│   go                         formula   283.3 MB ████▎─  —              2mo  requested  ││                                        │
+│   pandoc                     formula   271.3 MB ████▎─  —              23d  requested  ││                                        │
+│   gstreamer                  formula   224.9 MB ████▏─  —              2mo  requested  ││                                        │
+│   qt@5                       formula   217.5 MB ████▏─  —              3mo  requested  │╰─ enter to zoom ────────────────────────╯
+│   awscli                     formula   208.5 MB ████▏─  2026-09-22     46d  requested  │╭─ Disk ─────────────────────── 21.4 GB ─╮
+│   trivy                      formula   203.7 MB ████▏─  —              2mo  requested  ││ Formulae   ██████████████▎──   18.0 GB │
+│   solargraph                 formula   192.8 MB ████──  —              3mo  requested  ││ Casks      ██▋──────────────    3.4 GB │
+│   mysqlworkbench             cask      187.6 MB ████──  —             2.7y  +1 old ve… ││ Idle ≥ 1y  ██───────────────    2.6 GB │
+│   trufflehog                 formula   169.8 MB ████──  —              2mo  requested  ││ Old vers.  █████▍───────────    6.8 GB │
+│   deno                       formula   157.4 MB ████──  —              2mo  dep of 1;… ││ Orphans    ─────────────────       0 B │
+│   qtdeclarative              formula   156.2 MB ████──  —              2mo  dep of 27… ││ Broken                         5 casks │
+│   multipass                  cask      151.9 MB ███▉──  —              3mo             ││ Marked     █▋───────────────    2.1 GB │
+│   opencode                   formula   143.9 MB ███▉──  —              2mo  requested  ││                                        │
+╰─ ● 2 marked · 2.1 GB · d remove · esc clear ───────────────────────────────────────────╯╰─ c to clean up ────────────────────────╯
+ NORMAL   ↑↓  move   space  mark   d  remove   c  clean   /  search   v  view   t  type   s  sort   enter  zoom   ?  help
 ```
 
 ## Install
@@ -31,15 +52,31 @@ Requires Go 1.25+ and `brew` on your `PATH`. The interface is built with
 
 ## Interactive use
 
-Run `brewdust` with no arguments. Scanning takes a few seconds.
+Run `brewdust` with no arguments. The layout borrows from
+[Zellij](https://zellij.dev): a tab bar of views across the top, framed panes
+with their titles in the border (the focused one in green), and a status bar of
+key hints at the bottom.
+
+- **Packages** lists everything in the current view with a log-scale size bar,
+  colour-coded idle time, and the scroll position in its frame.
+- **Details** follows the selection: size and idle gauges, the evidence for
+  "last used", what depends on it, old versions, and missing apps. Press
+  `enter` to zoom it to full screen.
+- **Disk** breaks down where the space goes: formulae vs. casks, packages idle
+  for a year or more, reclaimable old versions, orphans, broken casks, and what
+  you've marked.
+- Removal, cleanup and help open as floating panes over the dimmed list.
+
+The side column hides on terminals narrower than 100 columns, and the Disk
+pane on ones shorter than 24 rows.
 
 | Key | Action |
 | --- | --- |
 | `↑`/`↓`, `j`/`k`, `pgup`/`pgdn`, `g`/`G` | Move |
 | `space` / `a` | Mark the package / mark everything shown |
-| `enter` | Details: evidence for "last used", dependents, old version paths |
+| `enter` | Zoom the details pane |
 | `/` | Search names and descriptions |
-| `v` | Cycle views: all, requested, idle ≥ 90d, idle ≥ 1y, orphans, broken casks |
+| `v` | Next view tab: all, requested, idle ≥ 90d, idle ≥ 1y, orphans, broken casks |
 | `t` / `s` | Cycle type (all, formula, cask) / sort (size, idle, name) |
 | `D` | Toggle whether use by dependents counts |
 | `d`, `x`, `delete` | Remove the marked packages, or the selected one |

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/phoenix-tui/phoenix/style"
@@ -13,124 +12,113 @@ import (
 	"github.com/BoxingOctopusCreative/brewdust/internal/report"
 )
 
+// Palette, loosely after Zellij's default theme: green frame on the focused
+// pane, grey frames elsewhere, orange key hints on dark pills.
 var (
 	colAccent = style.RGB(255, 175, 95)
-	colDim    = style.RGB(135, 135, 135)
-	colGreen  = style.RGB(135, 215, 135)
-	colYellow = style.RGB(230, 200, 100)
-	colRed    = style.RGB(240, 110, 110)
+	colGreen  = style.RGB(152, 195, 121)
+	colYellow = style.RGB(229, 192, 123)
+	colRed    = style.RGB(224, 108, 117)
+	colBlue   = style.RGB(97, 175, 239)
+	colDim    = style.RGB(128, 128, 128)
+	colFrame  = style.RGB(92, 92, 92)
+	colBarBg  = style.RGB(36, 36, 36)
+	colPillBg = style.RGB(64, 64, 64)
+	colInk    = style.RGB(24, 24, 24)
+	colText   = style.RGB(220, 220, 220)
 
 	stTitle  = style.New().Foreground(colAccent).Bold(true)
 	stDim    = style.New().Foreground(colDim)
 	stBold   = style.New().Bold(true)
 	stHeader = style.New().Foreground(colDim).Bold(true)
 	stMark   = style.New().Foreground(colAccent).Bold(true)
-	stSel    = style.New().Background(style.RGB(58, 58, 88)).Foreground(style.RGB(255, 255, 255)).Bold(true)
+	colSelBg = style.RGB(52, 61, 70)
+	stSel    = style.New().Background(colSelBg).Foreground(style.RGB(255, 255, 255)).Bold(true)
 	stWarn   = style.New().Foreground(colYellow)
 	stErr    = style.New().Foreground(colRed).Bold(true)
 	stKey    = style.New().Foreground(colAccent)
-	stBorder = style.New().Foreground(colAccent)
+
+	stFrame           = style.New().Foreground(colFrame)
+	stFrameFocus      = style.New().Foreground(colGreen)
+	stFrameTitle      = style.New().Foreground(colText)
+	stFrameTitleFocus = style.New().Foreground(colGreen).Bold(true)
+	stFrameDim        = style.New().Foreground(colDim)
+	stThumb           = style.New().Foreground(colGreen).Bold(true)
+	stTrack           = style.New().Foreground(style.RGB(70, 70, 70))
+	stBackdrop        = style.New().Foreground(style.RGB(80, 80, 80))
+
+	stBarBg     = style.New().Background(colBarBg)
+	stBarText   = style.New().Background(colBarBg).Foreground(colDim)
+	stLogo      = style.New().Background(colAccent).Foreground(colInk).Bold(true)
+	stTab       = style.New().Background(colPillBg).Foreground(colText)
+	stTabActive = style.New().Background(colGreen).Foreground(colInk).Bold(true)
+	stPillKey   = style.New().Background(colAccent).Foreground(colInk).Bold(true)
+	stPillLabel = style.New().Background(colPillBg).Foreground(colText)
+
+	stGaugeAccent = style.New().Foreground(colAccent)
+	stGaugeGreen  = style.New().Foreground(colGreen)
+	stGaugeYellow = style.New().Foreground(colYellow)
+	stGaugeRed    = style.New().Foreground(colRed)
+	stGaugeBlue   = style.New().Foreground(colBlue)
 )
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
-
-// visibleWidth measures text as displayed, ignoring color escapes.
-func visibleWidth(s string) int { return uniwidth.StringWidth(ansiRE.ReplaceAllString(s, "")) }
-
-// box draws a rounded border around lines. (Phoenix's Border counts escape
-// sequences as width, which misaligns the right edge of colored content.)
-func box(lines []string, maxWidth int) string {
-	inner := 0
-	for _, l := range lines {
-		if w := visibleWidth(l); w > inner {
-			inner = w
-		}
-	}
-	if maxWidth > 4 && inner > maxWidth-4 {
-		inner = maxWidth - 4
-	}
-	edge := func(s string) string { return paint(stBorder, s) }
-	out := []string{edge("╭" + strings.Repeat("─", inner+2) + "╮")}
-	for _, l := range lines {
-		pad := inner - visibleWidth(l)
-		if pad < 0 {
-			pad = 0
-		}
-		out = append(out, edge("│")+" "+l+strings.Repeat(" ", pad)+" "+edge("│"))
-	}
-	out = append(out, edge("╰"+strings.Repeat("─", inner+2)+"╯"))
-	return strings.Join(out, "\n")
-}
-
-func paint(s style.Style, text string) string {
-	if text == "" {
-		return ""
-	}
-	return style.Render(s, text)
-}
-
-// fit truncates or pads text to exactly w display columns.
-func fit(text string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	tw := uniwidth.StringWidth(text)
-	if tw <= w {
-		return text + strings.Repeat(" ", w-tw)
-	}
-	var b strings.Builder
-	used := 0
-	for _, r := range text {
-		rw := uniwidth.RuneWidth(r)
-		if used+rw > w-1 {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	b.WriteString("…")
-	used++
-	return b.String() + strings.Repeat(" ", w-used)
-}
-
-func fitRight(text string, w int) string {
-	if tw := uniwidth.StringWidth(text); tw < w {
-		return strings.Repeat(" ", w-tw) + text
-	}
-	return fit(text, w)
-}
-
 func idleColor(days int) style.Style {
 	switch {
 	case days < 30:
-		return style.New().Foreground(colGreen)
+		return stGaugeGreen
 	case days < 180:
-		return style.New().Foreground(colYellow)
+		return stGaugeYellow
 	default:
-		return style.New().Foreground(colRed)
+		return stGaugeRed
 	}
+}
+
+// Layout constants: one row each for the tab bar and status bar.
+const chromeRows = 2
+
+// sideWidth is the width of the right-hand column, or 0 when the terminal is
+// too narrow for it.
+func (m Model) sideWidth() int {
+	if m.width < 100 {
+		return 0
+	}
+	return min(max(m.width*32/100, 38), 56)
+}
+
+// listHeight is the number of package rows that fit in the packages pane.
+func (m Model) listHeight() int {
+	// chrome, pane borders, column header
+	return max(m.height-chromeRows-2-1, 1)
 }
 
 // View implements the Phoenix model.
 func (m Model) View() string {
-	var body string
-	switch {
-	case m.mode == modeLoading && m.snap == nil:
-		body = m.viewLoading()
-	case m.err != nil && m.snap == nil:
-		body = paint(stErr, "Error: ") + m.err.Error() + "\n\n" + paint(stDim, "r to retry · q to quit")
-	case m.mode == modeDetail:
-		body = m.viewDetail()
-	case m.mode == modeHelp:
-		body = viewHelp()
-	case m.mode == modeDialog:
-		body = m.viewDialog()
-	default:
-		body = m.viewList()
+	w, h := max(m.width, 40), max(m.height, 10)
+	bodyH := h - chromeRows
+
+	var body []string
+	if m.mode == modeDetail && m.current() != nil {
+		p := m.current()
+		body = pane(w, bodyH, paneSpec{
+			title:   "Details · " + p.Name,
+			right:   "zoomed",
+			focused: true,
+			body:    m.detailLines(p, w-4, true),
+			footer:  paint(stDim, "esc to return"),
+		})
+	} else {
+		body = m.mainPanes(w, bodyH)
 	}
-	return m.frame(m.header() + "\n" + body)
+
+	lines := append([]string{m.tabBar(w)}, body...)
+	lines = append(lines, m.statusBar(w))
+
+	if title, content, ok := m.floating(); ok {
+		lines = m.float(dimAll(lines), title, content, w, h)
+	}
+	return m.frame(strings.Join(lines, "\n"))
 }
 
 // frame turns content into a full-screen redraw. Phoenix's alt-screen
@@ -144,120 +132,211 @@ func (m Model) frame(content string) string {
 	return "\x1b[H" + strings.Join(lines, "\x1b[K\r\n") + "\x1b[K\x1b[J"
 }
 
-func (m Model) header() string {
-	title := paint(stTitle, "brewdust")
-	if m.snap == nil {
-		return title
+// tabBar is the top line: logo, one tab per view, and totals on the right.
+func (m Model) tabBar(w int) string {
+	left := paint(stLogo, " brewdust ") + paint(stBarBg, " ")
+	var tabs []string
+	if m.preset < 0 {
+		tabs = append(tabs, paint(stTabActive, " custom "))
 	}
-	var total, reclaim int64
-	for _, p := range m.snap.Packages {
-		total += p.SizeBytes
-		reclaim += p.ReclaimableBytes
+	for i, p := range presets {
+		st := stTab
+		if i == m.preset {
+			st = stTabActive
+		}
+		tabs = append(tabs, paint(st, " "+p.name+" "))
 	}
-	stats := fmt.Sprintf("  %d packages · %s", len(m.snap.Packages), report.Bytes(total))
-	if reclaim > 0 {
-		stats += fmt.Sprintf(" · %s in old versions", report.Bytes(reclaim))
+	left += pills(tabs, w-visibleWidth(left), stBarBg)
+
+	right := ""
+	if m.snap != nil {
+		var total int64
+		for _, p := range m.snap.Packages {
+			total += p.SizeBytes
+		}
+		right = fmt.Sprintf("%d packages · %s ", len(m.snap.Packages), report.Bytes(total))
 	}
-	line := title + paint(stDim, stats)
 	if m.mode == modeLoading {
-		line += "  " + paint(stKey, spinnerFrames[m.spinner%len(spinnerFrames)]+" rescanning…")
+		right = spinnerFrames[m.spinner%len(spinnerFrames)] + " scanning  " + right
 	}
-	return line
+	return bar(left, paint(stBarText, right), w, stBarBg)
 }
 
-func (m Model) viewLoading() string {
-	return fmt.Sprintf("\n  %s Scanning Homebrew packages…\n\n  %s",
-		paint(stKey, spinnerFrames[m.spinner%len(spinnerFrames)]),
-		paint(stDim, "Sizing kegs and reading access times; this takes a few seconds."))
-}
-
-// listHeight is the number of package rows that fit on screen.
-func (m Model) listHeight() int {
-	// header, filter bar, column header, status line, key hints
-	h := m.height - 5
-	if h < 1 {
-		return 1
+// statusBar is the bottom line: a mode pill and key hints, like Zellij's.
+func (m Model) statusBar(w int) string {
+	modeName, modeSt := "NORMAL", stTabActive
+	var keys [][2]string
+	switch {
+	case m.mode == modeSearch:
+		modeName, modeSt = "SEARCH", style.New().Background(colYellow).Foreground(colInk).Bold(true)
+		keys = [][2]string{{"type", "filter"}, {"enter", "keep"}, {"esc", "clear"}}
+	case m.mode == modeDialog && m.dlg != nil:
+		modeName, modeSt = "CONFIRM", stLogo
+		keys = [][2]string{{"y", "run"}, {"esc", "cancel"}}
+		if m.dlg.kind == dialogRemove && hasCask(m.dlg.targets) {
+			keys = append(keys, [2]string{"z", "zap"})
+		}
+		if m.dlg.kind == dialogClean {
+			keys = append(keys, [2]string{"1-3", "toggle"})
+		}
+	case m.mode == modeHelp:
+		modeName, modeSt = "HELP", style.New().Background(colBlue).Foreground(colInk).Bold(true)
+		keys = [][2]string{{"esc", "back"}}
+	case m.mode == modeDetail:
+		modeName = "ZOOM"
+		keys = [][2]string{{"esc", "back"}, {"d", "remove"}}
+	case m.mode == modeLoading:
+		modeName, modeSt = "SCAN", style.New().Background(colBlue).Foreground(colInk).Bold(true)
+		keys = [][2]string{{"q", "quit"}}
+	default:
+		keys = [][2]string{
+			{"↑↓", "move"}, {"space", "mark"}, {"d", "remove"}, {"c", "clean"}, {"/", "search"},
+			{"v", "view"}, {"t", "type"}, {"s", "sort"}, {"enter", "zoom"}, {"?", "help"}, {"q", "quit"},
+		}
 	}
-	return h
+	items := []string{paint(modeSt, " "+modeName+" ")}
+	for _, k := range keys {
+		items = append(items, pill(k[0], k[1]))
+	}
+	return bar(pills(items, w, stBarBg), "", w, stBarBg)
 }
 
-type columns struct{ name, notes int }
+// mainPanes lays out the package list and, if there's room, the side column.
+func (m Model) mainPanes(w, h int) []string {
+	side := m.sideWidth()
+	left := m.listPane(w-side, h)
+	if side == 0 {
+		return left
+	}
+	diskH := 0
+	if h >= 24 {
+		diskH = 10
+	}
+	right := m.detailPane(side, h-diskH)
+	if diskH > 0 {
+		right = append(right, m.diskPane(side, diskH)...)
+	}
+	return sideBySide(left, right)
+}
 
-func (m Model) columns() columns {
+type columns struct {
+	name, notes int
+	bar         bool
+}
+
+func (m Model) columns(inner int) columns {
 	name := 12
 	for _, p := range m.rows {
-		if w := uniwidth.StringWidth(p.Name); w > name {
-			name = w
-		}
+		name = max(name, uniwidth.StringWidth(p.Name))
 	}
-	if name > 28 {
-		name = 28
+	name = min(name, 28)
+	// mark(2) name kind(7) size(9) [bar(1+6)] last(10) idle(6), 2 spaces between
+	fixed := 2 + 2 + 7 + 2 + 9 + 2 + 10 + 2 + 6
+	c := columns{name: name, bar: true}
+	if c.name+fixed+7 > inner {
+		c.bar = false
+	} else {
+		fixed += 7
 	}
-	// mark(2) name kind(7) size(9) last(10) idle(6), two spaces between each
-	fixed := 2 + name + 2 + 7 + 2 + 9 + 2 + 10 + 2 + 6 + 2
-	notes := m.width - fixed
-	if notes < 0 {
-		name += notes
-		if name < 8 {
-			name = 8
-		}
-		notes = 0
+	if c.name+fixed > inner {
+		c.name = max(inner-fixed, 8)
 	}
-	return columns{name: name, notes: notes}
+	if notes := inner - c.name - fixed - 2; notes >= 8 {
+		c.notes = notes
+	}
+	return c
 }
 
-func (m Model) viewList() string {
-	var b strings.Builder
+func (m Model) listPane(w, h int) []string {
+	inner := w - 4
+	spec := paneSpec{title: "Packages", focused: m.mode == modeList || m.mode == modeSearch}
 
-	// Filter bar.
-	label := func(k, v string) string { return paint(stDim, k+" ") + v }
-	bar := []string{
-		label("view", m.presetName()),
-		label("type", m.filter.Kind),
-		label("sort", m.sortBy),
+	if m.snap == nil {
+		msg := []string{""}
+		if m.err != nil {
+			msg = append(msg, paint(stErr, "Error: ")+m.err.Error(), "", paint(stDim, "r to retry · q to quit"))
+		} else {
+			msg = append(msg,
+				paint(stKey, spinnerFrames[m.spinner%len(spinnerFrames)])+" Scanning Homebrew packages…",
+				"",
+				paint(stDim, "Sizing kegs and reading access times; this takes a few seconds."))
+		}
+		spec.body = msg
+		return pane(w, h, spec)
 	}
+
+	// Title carries the active filters, Zellij-style.
+	var bits []string
+	if m.filter.Kind != "all" {
+		bits = append(bits, m.filter.Kind)
+	}
+	bits = append(bits, "by "+m.sortBy)
 	if m.filter.Direct {
-		bar = append(bar, label("idle", "direct only"))
+		bits = append(bits, "direct use")
 	}
 	if m.mode == modeSearch {
-		bar = append(bar, label("search", m.filter.Query+paint(stKey, "▏")))
+		bits = append(bits, "/"+m.filter.Query+"▏")
 	} else if m.filter.Query != "" {
-		bar = append(bar, label("search", m.filter.Query))
+		bits = append(bits, "/"+m.filter.Query)
 	}
-	b.WriteString(strings.Join(bar, paint(stDim, "  │  ")) + "\n")
+	spec.title = "Packages · " + strings.Join(bits, " · ")
+	if len(m.rows) > 0 {
+		spec.right = fmt.Sprintf("%d/%d", m.cursor+1, len(m.rows))
+	}
 
-	c := m.columns()
-	hdr := "  " + fit("NAME", c.name) + "  " + fit("KIND", 7) + "  " + fitRight("SIZE", 9) + "  " +
-		fit("LAST USED", 10) + "  " + fitRight("IDLE", 6)
+	c := m.columns(inner)
+	hdr := "  " + fit("NAME", c.name) + "  " + fit("KIND", 7) + "  " + fitRight("SIZE", 9)
+	if c.bar {
+		hdr += " " + strings.Repeat(" ", 6)
+	}
+	hdr += "  " + fit("LAST USED", 10) + "  " + fitRight("IDLE", 6)
 	if c.notes > 0 {
 		hdr += "  " + fit("NOTES", c.notes)
 	}
-	b.WriteString(paint(stHeader, hdr) + "\n")
+	body := []string{paint(stHeader, hdr)}
 
-	h := m.listHeight()
+	var maxSize int64
+	for _, p := range m.rows {
+		maxSize = max(maxSize, p.SizeBytes)
+	}
+	rows := m.listHeight()
 	if len(m.rows) == 0 {
-		b.WriteString(paint(stDim, "  No packages match this view.") + "\n")
-		h--
+		body = append(body, "", paint(stDim, "No packages match this view."), paint(stDim, "Press v to change view or esc to clear the search."))
 	}
-	end := m.offset + h
-	if end > len(m.rows) {
-		end = len(m.rows)
-	}
+	end := min(m.offset+rows, len(m.rows))
 	for i := m.offset; i < end; i++ {
-		b.WriteString(m.row(m.rows[i], i == m.cursor, c) + "\n")
+		body = append(body, m.row(m.rows[i], i == m.cursor, c, inner, maxSize))
 	}
-	for i := end - m.offset; i < h; i++ {
-		b.WriteString("\n")
-	}
+	spec.body = body
 
-	b.WriteString(m.statusLine() + "\n")
-	b.WriteString(hints(
-		"↑↓", "move", "space", "mark", "d", "remove", "c", "clean up", "/", "search",
-		"v", "view", "t", "type", "s", "sort", "enter", "details", "?", "help", "q", "quit"))
-	return b.String()
+	// Scroll thumb on the right border, over the row area (below the header).
+	if total := len(m.rows); total > rows {
+		spec.thumbLen = max(1, rows*rows/total)
+		spec.thumbAt = 1 + (rows-spec.thumbLen)*m.offset/max(1, total-rows)
+	}
+	spec.footer = m.listFooter()
+	return pane(w, h, spec)
 }
 
-func (m Model) row(p *analyze.Package, selected bool, c columns) string {
+func (m Model) listFooter() string {
+	switch {
+	case m.err != nil:
+		return paint(stErr, "error: "+m.err.Error())
+	case m.status != "":
+		return paint(stWarn, m.status)
+	case len(m.marked) > 0:
+		return paint(stMark, fmt.Sprintf("● %d marked · %s", len(m.marked), report.Bytes(m.markedBytes()))) +
+			paint(stDim, " · d remove · esc clear")
+	default:
+		var shown int64
+		for _, p := range m.rows {
+			shown += p.SizeBytes
+		}
+		return paint(stDim, fmt.Sprintf("%d shown · %s", len(m.rows), report.Bytes(shown)))
+	}
+}
+
+func (m Model) row(p *analyze.Package, selected bool, c columns, inner int, maxSize int64) string {
 	mark := "  "
 	if m.marked[key(p)] {
 		mark = "● "
@@ -267,172 +346,251 @@ func (m Model) row(p *analyze.Package, selected bool, c columns) string {
 		last = p.LastUsed.Local().Format("2006-01-02")
 	}
 	idleDays := m.filter.Idle(p)
-	cells := []string{
-		fit(p.Name, c.name),
-		fit(p.Kind, 7),
-		fitRight(report.Bytes(p.SizeBytes), 9),
-		fit(last, 10),
-		fitRight(report.Idle(idleDays), 6),
-	}
 	notes := ""
 	if c.notes > 0 {
 		notes = fit(report.Notes(p, m.filter.Direct), c.notes)
 	}
+	name, kind, size := fit(p.Name, c.name), fit(p.Kind, 7), fitRight(report.Bytes(p.SizeBytes), 9)
+	lastS, idle := fit(last, 10), fitRight(report.Idle(idleDays), 6)
 
 	if selected {
-		line := mark + strings.Join(cells, "  ")
+		line := mark + name + "  " + kind + "  " + size
+		if c.bar {
+			line += " " + strings.Repeat(" ", 6)
+		}
+		line += "  " + lastS + "  " + idle
 		if c.notes > 0 {
 			line += "  " + notes
 		}
-		return paint(stSel, fit(line, m.width))
+		line = paint(stSel, fit(line, inner))
+		if c.bar {
+			// Keep the size bar visible on the highlighted row.
+			at := 2 + c.name + 2 + 7 + 2 + 9 + 1
+			line = cut(line, 0, at) + gaugeOn(logFrac(p.SizeBytes, maxSize), 6, stGaugeAccent.Background(colSelBg), stTrack.Background(colSelBg)) + cut(line, at+6, inner)
+		}
+		return line
 	}
-	cells[4] = paint(idleColor(idleDays), cells[4])
-	line := paint(stMark, mark) + strings.Join(cells, "  ")
+	line := paint(stMark, mark) + name + "  " + paint(stDim, kind) + "  " + size
+	if c.bar {
+		line += " " + gauge(logFrac(p.SizeBytes, maxSize), 6, stGaugeAccent)
+	}
+	line += "  " + lastS + "  " + paint(idleColor(idleDays), idle)
 	if c.notes > 0 {
 		line += "  " + paint(stDim, notes)
 	}
 	return line
 }
 
-func (m Model) statusLine() string {
-	switch {
-	case m.err != nil:
-		return paint(stErr, "Error: ") + m.err.Error()
-	case m.status != "":
-		return paint(stWarn, m.status)
-	case len(m.marked) > 0:
-		return paint(stMark, fmt.Sprintf("%d marked · %s", len(m.marked), report.Bytes(m.markedBytes()))) +
-			paint(stDim, "  (d to remove, a to toggle all shown, esc to clear)")
-	default:
-		pos := ""
-		if len(m.rows) > 0 {
-			pos = fmt.Sprintf("%d/%d", m.cursor+1, len(m.rows))
-		}
-		var shown int64
-		for _, p := range m.rows {
-			shown += p.SizeBytes
-		}
-		return paint(stDim, fmt.Sprintf("%s shown · %s", pos, report.Bytes(shown)))
+func (m Model) detailPane(w, h int) []string {
+	spec := paneSpec{title: "Details"}
+	if p := m.current(); p != nil {
+		spec.title = "Details · " + p.Name
+		spec.body = m.detailLines(p, w-4, false)
+		spec.footer = paint(stDim, "enter to zoom")
+	} else if m.snap != nil {
+		spec.body = []string{paint(stDim, "Nothing selected.")}
 	}
+	return pane(w, h, spec)
 }
 
-func hints(pairs ...string) string {
-	var parts []string
-	for i := 0; i+1 < len(pairs); i += 2 {
-		parts = append(parts, paint(stKey, pairs[i])+" "+paint(stDim, pairs[i+1]))
-	}
-	return strings.Join(parts, paint(stDim, " · "))
-}
-
-func (m Model) viewDetail() string {
-	p := m.current()
-	if p == nil {
-		return ""
-	}
+// detailLines describes one package; full adds paths and complete lists.
+func (m Model) detailLines(p *analyze.Package, w int, full bool) []string {
+	const lw = 12
+	vw := max(w-lw, 10)
 	var lines []string
-	add := func(k, v string) {
-		lines = append(lines, paint(stDim, fit(k, 13))+v)
-	}
-	lines = append(lines, paint(stBold, p.Name)+paint(stDim, "  "+p.Kind+" "+p.Version), "")
-	if p.Desc != "" {
-		lines = append(lines, p.Desc, "")
-	}
-	add("Size", report.Bytes(p.SizeBytes))
-	if p.OldVersions > 0 {
-		add("Old versions", fmt.Sprintf("%d, %s reclaimable", p.OldVersions, report.Bytes(p.ReclaimableBytes)))
-		for _, op := range p.OldPaths {
-			add("", paint(stDim, op))
+	add := func(k, v string) { lines = append(lines, paint(stDim, fit(k, lw))+v) }
+	addWrapped := func(k string, items []string, limit int) {
+		text := strings.Join(items, ", ")
+		if !full && len(items) > limit {
+			text = strings.Join(items[:limit], ", ") + fmt.Sprintf(" +%d more", len(items)-limit)
+		}
+		for i, l := range wrap(text, vw) {
+			if i == 0 {
+				add(k, l)
+			} else {
+				add("", l)
+			}
 		}
 	}
-	add("Installed", p.InstalledAt.Local().Format("2006-01-02 15:04"))
+
+	head := paint(stBold, p.Name) + paint(stDim, "  "+p.Kind+" "+p.Version)
+	lines = append(lines, head)
+	if p.Desc != "" {
+		for _, l := range wrap(p.Desc, w) {
+			lines = append(lines, paint(stDim, l))
+		}
+	}
+	lines = append(lines, "")
+
+	var maxSize int64
+	for _, q := range m.snap.Packages {
+		maxSize = max(maxSize, q.SizeBytes)
+	}
+	add("Size", fitRight(report.Bytes(p.SizeBytes), 9)+" "+gauge(logFrac(p.SizeBytes, maxSize), min(max(vw-10, 4), 40), stGaugeAccent))
+
+	idleDays := m.filter.Idle(p)
+	add("Idle", fitRight(report.Idle(idleDays), 9)+" "+gauge(float64(idleDays)/730, min(max(vw-10, 4), 40), idleColor(idleDays)))
+	if p.ActiveVia != "" && !m.filter.Direct {
+		add("", paint(stDim, truncate("own use "+report.Idle(p.DirectIdleDays)+", active via "+p.ActiveVia, vw)))
+	}
+
 	if p.LastUsed != nil {
-		add("Last used", p.LastUsed.Local().Format("2006-01-02 15:04")+paint(stDim, "  ("+p.LastUsedEvidence+")"))
+		add("Last used", p.LastUsed.Local().Format("2006-01-02 15:04"))
+		if full {
+			for _, l := range wrap(p.LastUsedEvidence, vw) {
+				add("", paint(stDim, l))
+			}
+		} else {
+			add("", paint(stDim, truncate(p.LastUsedEvidence, vw)))
+		}
 	} else {
-		add("Last used", "no use detected since install")
+		add("Last used", paint(stDim, "not since install"))
 	}
-	idle := report.Idle(p.IdleDays)
-	if p.ActiveVia != "" {
-		idle += paint(stDim, fmt.Sprintf("  (own use: %s; kept active by %s)", report.Idle(p.DirectIdleDays), p.ActiveVia))
-	}
-	add("Idle", idle)
+	add("Installed", p.InstalledAt.Local().Format("2006-01-02"))
 	switch {
 	case p.Kind == analyze.KindCask:
-		add("Installed by", "cask")
+		add("Source", "cask")
 	case p.OnRequest:
-		add("Installed by", "you (on request)")
+		add("Source", "installed by you")
 	case p.Orphan:
-		add("Installed by", paint(stWarn, "dependency, no longer needed by anything"))
+		add("Source", paint(stWarn, "orphaned dependency"))
 	default:
-		add("Installed by", "dependency")
+		add("Source", fmt.Sprintf("dependency of %d", len(p.Dependents)))
 	}
 	if len(p.Dependents) > 0 {
-		add("Needed by", wrapList(p.Dependents, m.width-14))
+		addWrapped("Needed by", p.Dependents, 6)
+	}
+	if p.OldVersions > 0 {
+		add("Old vers.", paint(stWarn, fmt.Sprintf("%d · %s reclaimable", p.OldVersions, report.Bytes(p.ReclaimableBytes))))
+		if full {
+			for _, op := range p.OldPaths {
+				add("", paint(stDim, truncate(op, vw)))
+			}
+		}
 	}
 	for _, a := range p.MissingApps {
-		add("Missing app", paint(stWarn, a)+paint(stDim, "  (deleted outside brew; c to clean up)"))
+		add("Missing", paint(stWarn, truncate(a, vw)))
+		add("", paint(stDim, "deleted outside brew · c to clean up"))
 	}
 	if p.ScanErrors > 0 {
-		add("Unreadable", fmt.Sprintf("%d entries (permissions); size may be low", p.ScanErrors))
+		add("Unreadable", fmt.Sprintf("%d entries; size may be low", p.ScanErrors))
 	}
-	lines = append(lines, "", hints("esc", "back", "d", "remove"))
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-func wrapList(items []string, width int) string {
-	if width < 20 {
-		width = 20
+// diskPane summarises where the space goes, with gauges against the total.
+func (m Model) diskPane(w, h int) []string {
+	spec := paneSpec{title: "Disk"}
+	if m.snap == nil {
+		return pane(w, h, spec)
 	}
-	var lines []string
-	cur := ""
-	for _, it := range items {
-		cand := it
-		if cur != "" {
-			cand = cur + ", " + it
-		}
-		if uniwidth.StringWidth(cand) > width && cur != "" {
-			lines = append(lines, cur+",")
-			cur = it
+	var total, formulae, casks, old, orphans, stale int64
+	broken := 0
+	for _, p := range m.snap.Packages {
+		total += p.SizeBytes
+		old += p.ReclaimableBytes
+		if p.Kind == analyze.KindFormula {
+			formulae += p.SizeBytes
 		} else {
-			cur = cand
+			casks += p.SizeBytes
+		}
+		if p.Orphan {
+			orphans += p.SizeBytes
+		}
+		if p.Broken() {
+			broken++
+		}
+		if m.filter.Idle(p) >= 365 {
+			stale += p.SizeBytes
 		}
 	}
-	lines = append(lines, cur)
-	return strings.Join(lines, "\n"+strings.Repeat(" ", 13))
+	inner := w - 4
+	gw := max(inner-11-10, 4)
+	row := func(label string, n int64, st style.Style, extra string) string {
+		val := report.Bytes(n)
+		if extra != "" {
+			val = extra
+		}
+		return paint(stDim, fit(label, 10)) + " " + gauge(float64(n)/float64(max(total, 1)), gw, st) + " " + fitRight(val, 9)
+	}
+	brokenText := "none"
+	if broken > 0 {
+		brokenText = fmt.Sprintf("%d casks", broken)
+	}
+	spec.body = []string{
+		row("Formulae", formulae, stGaugeBlue, ""),
+		row("Casks", casks, stGaugeBlue, ""),
+		row("Idle ≥ 1y", stale, stGaugeRed, ""),
+		row("Old vers.", old, stGaugeYellow, ""),
+		row("Orphans", orphans, stGaugeYellow, ""),
+		paint(stDim, fit("Broken", 10)) + " " + fitRight(brokenText, inner-11),
+		row("Marked", m.markedBytes(), stGaugeAccent, ""),
+	}
+	spec.right = report.Bytes(total)
+	if old+orphans > 0 || broken > 0 {
+		spec.footer = paint(stDim, "c to clean up")
+	}
+	return pane(w, h, spec)
 }
 
-func (m Model) viewDialog() string {
+// floating returns the floating pane to draw over everything, if any.
+func (m Model) floating() (string, []string, bool) {
+	switch {
+	case m.mode == modeDialog && m.dlg != nil:
+		if m.dlg.kind == dialogRemove {
+			return "Remove packages", m.dialogLines(), true
+		}
+		return "Clean up", m.dialogLines(), true
+	case m.mode == modeHelp:
+		return "Help", helpLines(), true
+	}
+	return "", nil, false
+}
+
+// float centres a focused pane over the (dimmed) screen, like Zellij's
+// floating panes.
+func (m Model) float(base []string, title string, content []string, w, h int) []string {
+	bw := 0
+	for _, l := range content {
+		bw = max(bw, visibleWidth(l))
+	}
+	bw = min(bw+4, w-4)
+	bh := min(len(content)+2, h-chromeRows)
+	box := pane(bw, bh, paneSpec{title: title, focused: true, body: content})
+	x := (w - bw) / 2
+	y := 1 + (h-chromeRows-bh)/2
+	return overlay(base, box, x, y, w)
+}
+
+func (m Model) dialogLines() []string {
 	d := m.dlg
 	var lines []string
-	listItems := func(items []string, max int) {
+	maxCmd := max(m.width-20, 20)
+	listItems := func(items []string, limit int) {
 		for i, it := range items {
-			if i == max {
-				lines = append(lines, paint(stDim, fmt.Sprintf("    … and %d more", len(items)-max)))
+			if i == limit {
+				lines = append(lines, paint(stDim, fmt.Sprintf("    … and %d more", len(items)-limit)))
 				break
 			}
 			lines = append(lines, "    "+it)
 		}
 	}
 
-	if d.kind == dialogRemove {
-		lines = append(lines, paint(stTitle, "Remove packages"), "")
-	} else {
-		lines = append(lines, paint(stTitle, "Clean up"), "")
-		bytes := map[actions.Category]int64{}
+	if d.kind == dialogClean {
+		size := map[actions.Category]int64{}
 		found := map[actions.Category]bool{}
 		for _, s := range d.steps {
-			bytes[s.Category] += s.Bytes
+			size[s.Category] += s.Bytes
 			found[s.Category] = true
 		}
 		for i, c := range actions.Categories {
-			box := "[ ]"
-			if d.cats[c] {
-				box = paint(stMark, "[x]")
-			}
+			box := paint(stDim, "[ ]")
 			extra := ""
 			if d.cats[c] {
+				box = paint(stMark, "[x]")
 				extra = "nothing to do"
 				if found[c] {
-					extra = "~" + report.Bytes(bytes[c])
+					extra = "~" + report.Bytes(size[c])
 				}
 			}
 			lines = append(lines, fmt.Sprintf("%s %s %s  %s", paint(stKey, fmt.Sprint(i+1)), box, c.Describe(), paint(stDim, extra)))
@@ -440,20 +598,21 @@ func (m Model) viewDialog() string {
 		lines = append(lines, "")
 	}
 
-	// Share the remaining screen rows between the steps' item lists, so the
-	// total and key hints at the bottom always stay visible.
-	fixed := 1 + 2 + len(lines) + 2*len(d.steps) + 4 // header, border, above, step title+command, footer
+	// Share the remaining rows between the steps' item lists so the total
+	// always stays on screen.
+	avail := m.height - chromeRows - 2 - 2
+	fixed := len(lines) + 2*len(d.steps) + 3
 	if len(d.blocked) > 0 {
 		fixed += 2 + min(len(d.blocked), 5) + 1
 	}
 	perStep := 1
 	if len(d.steps) > 0 {
-		perStep = max(1, (m.height-fixed)/len(d.steps)-1) // -1 leaves room for "… and N more"
+		perStep = max(1, (avail-fixed)/len(d.steps)-1)
 	}
 	for _, s := range d.steps {
 		lines = append(lines, paint(stBold, s.Title)+paint(stDim, "  ~"+report.Bytes(s.Bytes)))
 		listItems(s.Items, perStep)
-		lines = append(lines, paint(stDim, "  $ "+truncate(s.Command(), m.width-12)))
+		lines = append(lines, paint(stDim, "  $ "+truncate(s.Command(), maxCmd)))
 	}
 
 	if len(d.blocked) > 0 {
@@ -461,7 +620,7 @@ func (m Model) viewDialog() string {
 		var bl []string
 		for _, p := range d.targets {
 			if by, ok := d.blocked[p.Name]; ok {
-				bl = append(bl, fmt.Sprintf("%s (needed by %s)", p.Name, truncate(strings.Join(by, ", "), m.width-30)))
+				bl = append(bl, fmt.Sprintf("%s (needed by %s)", p.Name, truncate(strings.Join(by, ", "), maxCmd-20)))
 			}
 		}
 		listItems(bl, 5)
@@ -469,33 +628,19 @@ func (m Model) viewDialog() string {
 
 	lines = append(lines, "")
 	if len(d.steps) == 0 {
-		lines = append(lines, paint(stDim, "Nothing to do."), "", hints("esc", "back"))
-	} else {
-		lines = append(lines, paint(stBold, "Total: ~"+report.Bytes(actions.TotalBytes(d.steps))), "")
-		h := []string{"y/enter", "run", "esc", "cancel"}
-		if d.kind == dialogRemove && hasCask(d.targets) {
-			z := "zap: off"
-			if d.zap {
-				z = "zap: on (also delete app settings & caches)"
-			}
-			h = append(h, "z", z)
+		lines = append(lines, paint(stDim, "Nothing to do. esc to go back."))
+		return lines
+	}
+	total := paint(stBold, "Total ~"+report.Bytes(actions.TotalBytes(d.steps)))
+	if d.kind == dialogRemove && hasCask(d.targets) {
+		z := "zap off"
+		if d.zap {
+			z = "zap on: also delete app settings & caches"
 		}
-		if d.kind == dialogClean {
-			h = append(h, "1-3", "toggle")
-		}
-		lines = append(lines, hints(h...))
+		total += paint(stDim, "  ·  "+z)
 	}
-	return box(lines, m.width)
-}
-
-func truncate(s string, w int) string {
-	if w < 10 {
-		w = 10
-	}
-	if uniwidth.StringWidth(s) <= w {
-		return s
-	}
-	return strings.TrimRight(fit(s, w), " ")
+	lines = append(lines, total, "", pill("y", "run")+" "+pill("esc", "cancel"))
+	return lines
 }
 
 func hasCask(pkgs []*analyze.Package) bool {
@@ -507,16 +652,16 @@ func hasCask(pkgs []*analyze.Package) bool {
 	return false
 }
 
-func viewHelp() string {
+func helpLines() []string {
 	rows := [][2]string{
 		{"↑/↓  k/j", "move"},
 		{"pgup/pgdn  ctrl+u/d", "page"},
 		{"g / G", "top / bottom"},
 		{"space", "mark or unmark package"},
 		{"a", "mark or unmark everything shown"},
-		{"enter", "package details"},
+		{"enter", "zoom the details pane"},
 		{"/", "search names and descriptions (esc clears)"},
-		{"v", "cycle views: all, requested, idle ≥ 90d, idle ≥ 1y, orphans, broken casks"},
+		{"v", "next view tab"},
 		{"t", "cycle type: all, formula, cask"},
 		{"s", "cycle sort: size, idle, name"},
 		{"D", "toggle whether dependents count as use"},
@@ -527,13 +672,10 @@ func viewHelp() string {
 		{"q / ctrl+c", "quit"},
 	}
 	var lines []string
-	lines = append(lines, paint(stTitle, "Keys"), "")
 	for _, r := range rows {
 		lines = append(lines, paint(stKey, fit(r[0], 22))+r[1])
 	}
-	lines = append(lines, "",
+	return append(lines, "",
 		paint(stDim, "Removing or cleaning shows a confirmation first, then runs brew in"),
-		paint(stDim, "the normal terminal so you can see its output, and rescans afterwards."),
-		"", hints("esc", "back"))
-	return box(lines, 0)
+		paint(stDim, "the normal terminal so you can see its output, and rescans afterwards."))
 }

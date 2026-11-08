@@ -112,3 +112,27 @@ func TestMarkFilterAndRemoveDialog(t *testing.T) {
 		t.Errorf("toggling broken off should leave nothing, got %d", len(m.dlg.steps))
 	}
 }
+
+func TestPaneIsExactSize(t *testing.T) {
+	lines := pane(30, 5, paneSpec{title: "Packages", right: "1/9", footer: paint(stDim, "3 shown"), focused: true,
+		body: []string{"short", strings.Repeat("x", 60), paint(stMark, "● colored")}, thumbAt: 1, thumbLen: 2})
+	if len(lines) != 5 {
+		t.Fatalf("got %d lines", len(lines))
+	}
+	for i, l := range lines {
+		if w := visibleWidth(l); w != 30 {
+			t.Errorf("line %d is %d wide: %q", i, w, stripANSI(l))
+		}
+	}
+}
+
+func TestOverlayKeepsWidth(t *testing.T) {
+	base := []string{paint(stDim, strings.Repeat("a", 20)), strings.Repeat("b", 20)}
+	out := overlay(base, []string{paint(stMark, "XYZ")}, 5, 1, 20)
+	if got := stripANSI(out[1]); got != "bbbbbXYZbbbbbbbbbbbb" {
+		t.Errorf("overlay = %q", got)
+	}
+	if visibleWidth(out[0]) != 20 {
+		t.Error("untouched row changed width")
+	}
+}
