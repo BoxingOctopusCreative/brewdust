@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/BoxingOctopusCreative/brewdust/internal/app"
@@ -48,11 +46,11 @@ func runList(cmd *cobra.Command, ff *filterFlags, lf listFlags) error {
 		shown = shown[:lf.limit]
 	}
 	if lf.json {
-		return report.JSON(os.Stdout, shown, snap.Now)
+		return report.JSON(cmd.OutOrStdout(), shown, snap.Now)
 	}
-	if err := report.Table(os.Stdout, shown, f.Direct); err != nil {
+	if err := report.Table(cmd.OutOrStdout(), shown, f.Direct); err != nil {
 		return err
 	}
-	report.Summary(os.Stdout, shown, snap.Packages)
+	report.Summary(cmd.OutOrStdout(), shown, snap.Packages)
 	return nil
 }

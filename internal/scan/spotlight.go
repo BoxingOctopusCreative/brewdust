@@ -17,11 +17,30 @@ func AppLastUsed(path string) (time.Time, bool) {
 	if runtime.GOOS != "darwin" {
 		return time.Time{}, false
 	}
-	raw, err := exec.Command("mdls", "-raw", "-name", "kMDItemLastUsedDate", path).Output()
+	raw, err := exec.Command("mdls", "-raw",
+		"-name", "kMDItemLastUsedDate", "-name", "kMDItemFSContentChangeDate", path).Output()
 	if err != nil {
 		return time.Time{}, false
 	}
-	return parseMdlsDate(string(raw))
+	return parseLastUsed(string(raw))
+}
+
+// parseLastUsed reads mdls -raw output for kMDItemLastUsedDate and
+// kMDItemFSContentChangeDate, which it separates with NULs. For a bundle
+// Spotlight hasn't indexed, mdls reports the modification date as the
+// last-used date; equal dates therefore mean there's no launch record.
+func parseLastUsed(raw string) (time.Time, bool) {
+	vals := strings.Split(raw, "\x00")
+	used, ok := parseMdlsDate(vals[0])
+	if !ok {
+		return time.Time{}, false
+	}
+	if len(vals) > 1 {
+		if changed, ok := parseMdlsDate(vals[1]); ok && changed.Equal(used) {
+			return time.Time{}, false
+		}
+	}
+	return used, true
 }
 
 func parseMdlsDate(s string) (time.Time, bool) {

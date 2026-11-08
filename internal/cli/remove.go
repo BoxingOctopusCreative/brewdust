@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 
@@ -68,7 +67,7 @@ listed) unless you remove those dependents too or pass --ignore-dependencies.`,
 			}
 
 			plan := actions.PlanRemoval(pkgs, opt)
-			printBlocked(os.Stdout, plan.Blocked)
+			printBlocked(cmd.OutOrStdout(), plan.Blocked)
 			return runSteps(cmd, snap.Prefix, plan.Steps, rf)
 		},
 	}
@@ -109,7 +108,7 @@ func printPlan(w io.Writer, steps []actions.Step) {
 }
 
 func runSteps(cmd *cobra.Command, prefix string, steps []actions.Step, rf runFlags) error {
-	out := os.Stdout
+	out := cmd.OutOrStdout()
 	if len(steps) == 0 {
 		fmt.Fprintln(out, "Nothing to do.")
 		return nil
@@ -120,7 +119,7 @@ func runSteps(cmd *cobra.Command, prefix string, steps []actions.Step, rf runFla
 		return nil
 	}
 	if !rf.yes {
-		ok, err := confirm(os.Stdin, out, "Proceed?")
+		ok, err := confirm(cmd.InOrStdin(), out, "Proceed?")
 		if err != nil {
 			return err
 		}
@@ -133,7 +132,7 @@ func runSteps(cmd *cobra.Command, prefix string, steps []actions.Step, rf runFla
 	for _, s := range steps {
 		fmt.Fprintf(out, "\n==> %s\n", s.Title)
 		if err := actions.Execute(cmd.Context(), prefix, s, out); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(cmd.ErrOrStderr(), "error:", err)
 			failed = append(failed, s.Title)
 		}
 	}

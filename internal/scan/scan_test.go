@@ -57,3 +57,30 @@ func TestParseMdlsDate(t *testing.T) {
 		t.Errorf("got %v, %v", got, ok)
 	}
 }
+
+func TestParseLastUsed(t *testing.T) {
+	launched := "2026-10-11 22:52:20 +0000\x002026-09-24 05:43:18 +0000"
+	if got, ok := parseLastUsed(launched); !ok || !got.Equal(time.Date(2026, 10, 11, 22, 52, 20, 0, time.UTC)) {
+		t.Errorf("indexed app: got %v, %v", got, ok)
+	}
+	// mdls echoes the modification date for bundles Spotlight hasn't indexed.
+	if _, ok := parseLastUsed("2026-11-08 14:24:51 +0000\x002026-11-08 14:24:51 +0000"); ok {
+		t.Error("last-used equal to content change should mean no record")
+	}
+	if _, ok := parseLastUsed("(null)\x002026-11-08 14:24:51 +0000"); ok {
+		t.Error("never launched should mean no record")
+	}
+	if _, ok := parseLastUsed("2026-10-11 22:52:20 +0000"); !ok {
+		t.Error("a lone date should still parse")
+	}
+}
+
+func TestAppLastUsedUnindexedBundle(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Fresh.app")
+	if err := os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := AppLastUsed(app); ok {
+		t.Errorf("a bundle that was never opened reported as used at %v", got)
+	}
+}

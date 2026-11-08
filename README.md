@@ -221,3 +221,14 @@ if anything you're keeping needs it, even through another package.
   which is why those files are ignored.
 - "app deleted outside brew" means the cask's app is gone but Homebrew still
   thinks it is installed; `brewdust clean --only broken` (or `brew uninstall --cask <name>`) removes the leftovers.
+
+## Development
+
+```sh
+go test ./...
+```
+
+The tests don't touch your Homebrew installation. `internal/brewtest` builds a
+fake one in a temporary directory (Cellar and Caskroom files with chosen
+access times) and puts a stub `brew` on `PATH` that answers from it and logs
+every call, so `list`, `remove` and `clean` are tested end to end.
