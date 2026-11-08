@@ -76,8 +76,8 @@ pane on ones shorter than 24 rows.
 | `space` / `a` | Mark the package / mark everything shown |
 | `enter` | Zoom the details pane |
 | `/` | Search names and descriptions |
-| `v` | Next view tab: all, requested, idle ≥ 90d, idle ≥ 1y, orphans, broken casks |
-| `t` / `s` | Cycle type (all, formula, cask) / sort (size, idle, name) |
+| `v` | Next view tab: all, requested, dependencies, idle ≥ 90d, idle ≥ 1y, orphans, broken casks |
+| `t` / `s` | Cycle type (all, formula, cask) / sort (size, idle, name, deps) |
 | `D` | Toggle whether use by dependents counts |
 | `d`, `x`, `delete` | Remove the marked packages, or the selected one |
 | `c` | Clean up old versions, orphans and broken casks |
@@ -141,12 +141,13 @@ Shared by the interactive view and `list`.
 
 | Flag | Meaning |
 | --- | --- |
-| `--sort size\|idle\|name` | Sort order (default `size`) |
+| `--sort size\|idle\|name\|deps` | Sort order (default `size`); `deps` puts the most depended-on first |
 | `-t, --type all\|formula\|cask` | Limit to one package type |
 | `--stale N` | Only packages idle for at least N days |
 | `--requested` | Only packages you installed explicitly (casks always count) |
 | `--orphans` | Only dependencies with no installed dependents |
 | `--broken` | Only casks whose app was deleted outside brew |
+| `--deps` | Only packages that other installed packages depend on |
 | `--direct` | Judge idleness by a package's own use, ignoring its dependents |
 | `--min-size 50MB` | Only packages at least this big (decimal units) |
 
@@ -177,6 +178,15 @@ date, and the last activity of anything installed that depends on it. A library
 nobody calls directly is still "active" if a tool that links it was used
 yesterday; the notes column says which dependent kept it active. Use `--direct`
 to turn that off.
+
+**Dependencies.** The NEEDED BY column (in the TUI and `list`) shows what
+directly depends on each package, e.g. `rust` or `qtconnectivity +7`. The
+details pane lists those dependents, how many more need it indirectly, and
+what the package itself depends on; `--json` includes `dependencies`,
+`dependents` and `all_dependents`. Homebrew records each package's runtime
+dependencies transitively, so brewdust works out the direct links from what is
+actually installed. Removal checks the full indirect set: a formula is skipped
+if anything you're keeping needs it, even through another package.
 
 ## Caveats
 

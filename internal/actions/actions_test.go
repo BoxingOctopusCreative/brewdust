@@ -12,7 +12,7 @@ import (
 )
 
 func TestPlanRemovalBlocksNeededFormulae(t *testing.T) {
-	openssl := &analyze.Package{Name: "openssl", Kind: analyze.KindFormula, SizeBytes: 10, Dependents: []string{"curl", "wget"}}
+	openssl := &analyze.Package{Name: "openssl", Kind: analyze.KindFormula, SizeBytes: 10, AllDependents: []string{"curl", "wget"}}
 	curl := &analyze.Package{Name: "curl", Kind: analyze.KindFormula, SizeBytes: 5}
 	app := &analyze.Package{Name: "calibre", Kind: analyze.KindCask, SizeBytes: 100}
 

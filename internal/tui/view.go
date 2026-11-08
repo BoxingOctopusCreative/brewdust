@@ -37,6 +37,7 @@ var (
 	stWarn   = style.New().Foreground(colYellow)
 	stErr    = style.New().Foreground(colRed).Bold(true)
 	stKey    = style.New().Foreground(colAccent)
+	stDeps   = style.New().Foreground(colBlue)
 
 	stFrame           = style.New().Foreground(colFrame)
 	stFrameFocus      = style.New().Foreground(colGreen)
@@ -241,29 +242,39 @@ func (m Model) mainPanes(w, h int) []string {
 }
 
 type columns struct {
-	name, notes int
-	bar         bool
+	name, needed, notes int
+	bar                 bool
 }
 
+// neededW is the NEEDED BY column's width when shown.
+const neededW = 16
+
+// columns divides the pane's inner width. Space goes, in order, to a
+// minimum name width, NEEDED BY, the size bar, the rest of the name, and
+// finally NOTES; whatever doesn't fit is dropped.
 func (m Model) columns(inner int) columns {
-	name := 12
+	want := 12
 	for _, p := range m.rows {
-		name = max(name, uniwidth.StringWidth(p.Name))
+		want = max(want, uniwidth.StringWidth(p.Name))
 	}
-	name = min(name, 28)
-	// mark(2) name kind(7) size(9) [bar(1+6)] last(10) idle(6), 2 spaces between
-	fixed := 2 + 2 + 7 + 2 + 9 + 2 + 10 + 2 + 6
-	c := columns{name: name, bar: true}
-	if c.name+fixed+7 > inner {
-		c.bar = false
-	} else {
-		fixed += 7
+	want = min(want, 28)
+	// mark(2) kind(7) size(9) last(10) idle(6), with 2-space gaps
+	rem := inner - (2 + 2 + 7 + 2 + 9 + 2 + 10 + 2 + 6)
+	c := columns{name: min(want, 14)}
+	rem -= c.name
+	if rem >= neededW+2 {
+		c.needed, rem = neededW, rem-neededW-2
 	}
-	if c.name+fixed > inner {
-		c.name = max(inner-fixed, 8)
+	if rem >= 7 {
+		c.bar, rem = true, rem-7
 	}
-	if notes := inner - c.name - fixed - 2; notes >= 8 {
-		c.notes = notes
+	grow := min(want-c.name, max(rem, 0))
+	c.name, rem = c.name+grow, rem-grow
+	if rem >= 10 {
+		c.notes = rem - 2
+	}
+	if rem < 0 {
+		c.name = max(c.name+rem, 8)
 	}
 	return c
 }
@@ -311,6 +322,9 @@ func (m Model) listPane(w, h int) []string {
 		hdr += " " + strings.Repeat(" ", 6)
 	}
 	hdr += "  " + fit("LAST USED", 10) + "  " + fitRight("IDLE", 6)
+	if c.needed > 0 {
+		hdr += "  " + fit("NEEDED BY", c.needed)
+	}
 	if c.notes > 0 {
 		hdr += "  " + fit("NOTES", c.notes)
 	}
@@ -372,6 +386,7 @@ func (m Model) row(p *analyze.Package, selected bool, c columns, inner int, maxS
 	}
 	name, kind, size := fit(p.Name, c.name), fit(p.Kind, 7), fitRight(report.Bytes(p.SizeBytes), 9)
 	lastS, idle := fit(last, 10), fitRight(report.Idle(idleDays), 6)
+	needed := neededLabel(p, c.needed)
 
 	if selected {
 		line := mark + name + "  " + kind + "  " + size
@@ -379,6 +394,9 @@ func (m Model) row(p *analyze.Package, selected bool, c columns, inner int, maxS
 			line += " " + strings.Repeat(" ", 6)
 		}
 		line += "  " + lastS + "  " + idle
+		if c.needed > 0 {
+			line += "  " + needed
+		}
 		if c.notes > 0 {
 			line += "  " + notes
 		}
@@ -395,6 +413,13 @@ func (m Model) row(p *analyze.Package, selected bool, c columns, inner int, maxS
 		line += " " + gauge(logFrac(p.SizeBytes, maxSize), 6, stGaugeAccent)
 	}
 	line += "  " + lastS + "  " + paint(idleColor(idleDays), idle)
+	if c.needed > 0 {
+		st := stDim
+		if len(p.Dependents) > 0 {
+			st = stDeps
+		}
+		line += "  " + paint(st, needed)
+	}
 	if c.notes > 0 {
 		line += "  " + paint(stDim, notes)
 	}
@@ -475,10 +500,19 @@ func (m Model) detailLines(p *analyze.Package, w int, full bool) []string {
 	case p.Orphan:
 		add("Source", paint(stWarn, "orphaned dependency"))
 	default:
-		add("Source", fmt.Sprintf("dependency of %d", len(p.Dependents)))
+		add("Source", "dependency")
 	}
-	if len(p.Dependents) > 0 {
+	switch {
+	case len(p.Dependents) > 0:
 		addWrapped("Needed by", p.Dependents, 6)
+		if extra := len(p.AllDependents) - len(p.Dependents); extra > 0 {
+			add("", paint(stDim, fmt.Sprintf("+%d more indirectly (%d in all)", extra, len(p.AllDependents))))
+		}
+	case p.Kind == analyze.KindFormula:
+		add("Needed by", paint(stDim, "nothing installed"))
+	}
+	if len(p.Dependencies) > 0 {
+		addWrapped("Depends on", p.Dependencies, 6)
 	}
 	if p.OldVersions > 0 {
 		add("Old vers.", paint(stWarn, fmt.Sprintf("%d · %s reclaimable", p.OldVersions, report.Bytes(p.ReclaimableBytes))))
@@ -676,7 +710,7 @@ func helpLines() []string {
 		{"/", "search names and descriptions (esc clears)"},
 		{"v", "next view tab"},
 		{"t", "cycle type: all, formula, cask"},
-		{"s", "cycle sort: size, idle, name"},
+		{"s", "cycle sort: size, idle, name, deps"},
 		{"D", "toggle whether dependents count as use"},
 		{"d / x / delete", "remove marked packages (or the selected one)"},
 		{"c", "clean up old versions, orphans and broken casks"},
@@ -691,6 +725,7 @@ func helpLines() []string {
 		{"drag scrollbar", "scroll; click the track to jump"},
 		{"wheel", "scroll the list"},
 		{"click tab / header", "switch view / sort by that column"},
+		{"click NEEDED BY", "sort by most depended-on"},
 		{"click Disk row", "clean up that category"},
 		{"click a key hint", "same as pressing it"},
 	}
@@ -705,4 +740,14 @@ func helpLines() []string {
 	return append(lines, "",
 		paint(stDim, "Removing or cleaning shows a confirmation first, then runs brew in"),
 		paint(stDim, "the normal terminal so you can see its output, and rescans afterwards."))
+}
+
+// neededLabel fits "first-dependent +N" into w columns, shortening the name
+// rather than losing the count.
+func neededLabel(p *analyze.Package, w int) string {
+	if len(p.Dependents) < 2 {
+		return fit(report.NeededBy(p), w)
+	}
+	more := fmt.Sprintf(" +%d", len(p.Dependents)-1)
+	return fit(strings.TrimRight(fit(p.Dependents[0], w-len(more)), " ")+more, w)
 }

@@ -82,6 +82,11 @@ func (m Model) headerSort(x int, g geom) string {
 	if a, b := span(10 + 2 + 6); x >= a && x < b { // last used + idle
 		return "idle"
 	}
+	if c.needed > 0 {
+		if a, b := span(c.needed); x >= a && x < b {
+			return "deps"
+		}
+	}
 	return ""
 }
 

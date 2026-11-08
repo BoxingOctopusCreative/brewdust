@@ -60,6 +60,7 @@ type Filter struct {
 	Requested bool
 	Orphans   bool
 	Broken    bool
+	Needed    bool // only packages something installed directly depends on
 	StaleDays int
 	MinBytes  int64
 	Direct    bool
@@ -80,6 +81,7 @@ func (f Filter) Match(p *analyze.Package) bool {
 		f.Requested && !p.OnRequest,
 		f.Orphans && !p.Orphan,
 		f.Broken && !p.Broken(),
+		f.Needed && len(p.Dependents) == 0,
 		f.Idle(p) < f.StaleDays,
 		p.SizeBytes < f.MinBytes:
 		return false
@@ -102,7 +104,7 @@ func (f Filter) Apply(pkgs []*analyze.Package) []*analyze.Package {
 }
 
 // SortKeys lists the accepted sort orders.
-var SortKeys = []string{"size", "idle", "name"}
+var SortKeys = []string{"size", "idle", "name", "deps"}
 
 // Sort orders pkgs in place.
 func Sort(pkgs []*analyze.Package, by string, f Filter) error {
@@ -118,6 +120,13 @@ func Sort(pkgs []*analyze.Package, by string, f Filter) error {
 		})
 	case "name":
 		sort.SliceStable(pkgs, func(i, j int) bool { return pkgs[i].Name < pkgs[j].Name })
+	case "deps": // most depended-on first
+		sort.SliceStable(pkgs, func(i, j int) bool {
+			if a, b := len(pkgs[i].AllDependents), len(pkgs[j].AllDependents); a != b {
+				return a > b
+			}
+			return pkgs[i].SizeBytes > pkgs[j].SizeBytes
+		})
 	default:
 		return fmt.Errorf("unknown sort %q (want %s)", by, strings.Join(SortKeys, ", "))
 	}

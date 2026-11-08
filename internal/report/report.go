@@ -48,6 +48,19 @@ func LastUsed(p *analyze.Package) string {
 	return p.LastUsed.Local().Format("2006-01-02")
 }
 
+// NeededBy names what directly depends on a package: "—", "rust", or
+// "qtgrpc +36" when there are several.
+func NeededBy(p *analyze.Package) string {
+	switch len(p.Dependents) {
+	case 0:
+		return "—"
+	case 1:
+		return p.Dependents[0]
+	default:
+		return fmt.Sprintf("%s +%d", p.Dependents[0], len(p.Dependents)-1)
+	}
+}
+
 // Notes summarises status flags for a package.
 func Notes(p *analyze.Package, direct bool) string {
 	var n []string
@@ -57,7 +70,7 @@ func Notes(p *analyze.Package, direct bool) string {
 		} else if p.Orphan {
 			n = append(n, "orphan (brew autoremove)")
 		} else {
-			n = append(n, fmt.Sprintf("dep of %d", len(p.Dependents)))
+			n = append(n, "dependency")
 		}
 	}
 	if !direct && p.ActiveVia != "" {
@@ -79,16 +92,16 @@ func Notes(p *analyze.Package, direct bool) string {
 // Table writes a human-readable report.
 func Table(w io.Writer, pkgs []*analyze.Package, direct bool) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tKIND\tSIZE\tINSTALLED\tLAST USED\tIDLE\tNOTES")
+	fmt.Fprintln(tw, "NAME\tKIND\tSIZE\tINSTALLED\tLAST USED\tIDLE\tNEEDED BY\tNOTES")
 	for _, p := range pkgs {
 		idle := p.IdleDays
 		if direct {
 			idle = p.DirectIdleDays
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			p.Name, p.Kind, Bytes(p.SizeBytes),
 			p.InstalledAt.Local().Format("2006-01-02"),
-			LastUsed(p), Idle(idle), Notes(p, direct))
+			LastUsed(p), Idle(idle), NeededBy(p), Notes(p, direct))
 	}
 	return tw.Flush()
 }

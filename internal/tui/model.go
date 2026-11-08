@@ -48,6 +48,7 @@ type preset struct {
 var presets = []preset{
 	{"all", func(f *app.Filter) {}},
 	{"requested", func(f *app.Filter) { f.Requested = true }},
+	{"dependencies", func(f *app.Filter) { f.Needed = true }},
 	{"idle ≥ 90d", func(f *app.Filter) { f.StaleDays = 90 }},
 	{"idle ≥ 1y", func(f *app.Filter) { f.StaleDays = 365 }},
 	{"orphans", func(f *app.Filter) { f.Orphans = true }},
@@ -92,7 +93,7 @@ func newModel(e *env, opt Options) Model {
 		sortBy = "size"
 	}
 	p := 0
-	if f.Requested || f.Orphans || f.Broken || f.StaleDays > 0 {
+	if f.Requested || f.Orphans || f.Broken || f.Needed || f.StaleDays > 0 {
 		p = -1
 	}
 	return Model{env: e, mode: modeLoading, filter: f, preset: p, sortBy: sortBy, marked: map[string]bool{}, lastClick: -1}

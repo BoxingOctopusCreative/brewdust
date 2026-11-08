@@ -54,7 +54,7 @@ func r(c rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRune, Rune: c} }
 func TestMarkFilterAndRemoveDialog(t *testing.T) {
 	now := time.Now()
 	pkgs := []*analyze.Package{
-		{Name: "openssl", Kind: analyze.KindFormula, SizeBytes: 300, InstalledAt: now, Dependents: []string{"curl"}},
+		{Name: "openssl", Kind: analyze.KindFormula, SizeBytes: 300, InstalledAt: now, Dependents: []string{"curl"}, AllDependents: []string{"curl"}},
 		{Name: "curl", Kind: analyze.KindFormula, SizeBytes: 200, InstalledAt: now, OnRequest: true},
 		{Name: "calibre", Kind: analyze.KindCask, SizeBytes: 100, InstalledAt: now, MissingApps: []string{"/Applications/calibre.app"}},
 	}
@@ -134,5 +134,15 @@ func TestOverlayKeepsWidth(t *testing.T) {
 	}
 	if visibleWidth(out[0]) != 20 {
 		t.Error("untouched row changed width")
+	}
+}
+
+func TestNeededLabelKeepsCount(t *testing.T) {
+	p := &analyze.Package{Dependents: []string{"qtconnectivity", "a", "b", "c", "d", "e", "f", "g"}}
+	if got := neededLabel(p, 16); got != "qtconnectivi… +7" {
+		t.Errorf("neededLabel = %q", got)
+	}
+	if got := neededLabel(&analyze.Package{}, 6); got != "—     " {
+		t.Errorf("none = %q", got)
 	}
 }

@@ -84,7 +84,7 @@ func PlanRemoval(pkgs []*analyze.Package, opt RemoveOptions) Removal {
 			continue
 		}
 		var blockers []string
-		for _, d := range p.Dependents {
+		for _, d := range p.AllDependents { // indirect ones break too
 			if !chosen[d] {
 				blockers = append(blockers, d)
 			}

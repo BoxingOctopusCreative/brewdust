@@ -26,6 +26,7 @@ type filterFlags struct {
 	requested bool
 	orphans   bool
 	broken    bool
+	needed    bool
 	direct    bool
 	minSize   string
 	workers   int
@@ -33,12 +34,13 @@ type filterFlags struct {
 
 func (f *filterFlags) register(cmd *cobra.Command) {
 	pf := cmd.PersistentFlags()
-	pf.StringVar(&f.sortBy, "sort", "size", "sort by: size, idle, name")
+	pf.StringVar(&f.sortBy, "sort", "size", "sort by: size, idle, name, deps (most depended-on first)")
 	pf.StringVarP(&f.kind, "type", "t", "all", "package type: all, formula, cask")
 	pf.IntVar(&f.staleDays, "stale", 0, "only packages idle for at least this many days")
 	pf.BoolVar(&f.requested, "requested", false, "only packages you installed explicitly (plus casks)")
 	pf.BoolVar(&f.orphans, "orphans", false, "only dependencies nothing installed needs anymore")
 	pf.BoolVar(&f.broken, "broken", false, "only casks whose app was deleted outside brew")
+	pf.BoolVar(&f.needed, "deps", false, "only packages that other installed packages depend on")
 	pf.BoolVar(&f.direct, "direct", false, "judge idleness by each package's own use, ignoring its dependents")
 	pf.StringVar(&f.minSize, "min-size", "", "only packages at least this big, e.g. 50MB, 1.5GB")
 	pf.IntVar(&f.workers, "workers", runtime.NumCPU()*2, "parallel directory scanners")
@@ -66,6 +68,7 @@ func (f *filterFlags) filter() (app.Filter, error) {
 		Requested: f.requested,
 		Orphans:   f.orphans,
 		Broken:    f.broken,
+		Needed:    f.needed,
 		StaleDays: f.staleDays,
 		MinBytes:  min,
 		Direct:    f.direct,

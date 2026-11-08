@@ -32,7 +32,13 @@ type Package struct {
 	OnRequest        bool       `json:"on_request"`
 	LastUsed         *time.Time `json:"last_used,omitempty"`
 	LastUsedEvidence string     `json:"last_used_evidence,omitempty"`
-	Dependents       []string   `json:"dependents,omitempty"`
+	// Dependencies are the installed formulae this package directly needs.
+	Dependencies []string `json:"dependencies,omitempty"`
+	// Dependents are the installed packages that directly need this one.
+	Dependents []string `json:"dependents,omitempty"`
+	// AllDependents adds the ones that need it indirectly, through other
+	// packages. Removing this package would break every one of them.
+	AllDependents []string `json:"all_dependents,omitempty"`
 	// LastActive is the newest of: own last use, install time, and the
 	// LastActive of every installed dependent.
 	LastActive     time.Time `json:"last_active"`
@@ -43,7 +49,7 @@ type Package struct {
 	MissingApps    []string  `json:"missing_apps,omitempty"`
 	ScanErrors     int       `json:"scan_errors,omitempty"`
 
-	deps []string
+	deps []string // as reported: transitive for formulae, direct for casks
 }
 
 // Broken reports a cask whose app was deleted without `brew uninstall`.
@@ -240,13 +246,7 @@ func resolveDependencies(pkgs []*Package, now time.Time) {
 			formulae[p.Name] = p
 		}
 	}
-	for _, p := range pkgs {
-		for _, d := range p.deps {
-			if dep, ok := formulae[d]; ok && dep != p {
-				dep.Dependents = append(dep.Dependents, p.Name)
-			}
-		}
-	}
+	linkDependencies(pkgs, formulae)
 
 	done := map[*Package]bool{}
 	visiting := map[*Package]bool{}
@@ -286,14 +286,13 @@ func resolveDependencies(pkgs []*Package, now time.Time) {
 
 	for _, p := range pkgs {
 		resolve(p)
-		sort.Strings(p.Dependents)
 		p.IdleDays = daysBetween(p.LastActive, now)
 		direct := p.InstalledAt
 		if p.LastUsed != nil && p.LastUsed.After(direct) {
 			direct = *p.LastUsed
 		}
 		p.DirectIdleDays = daysBetween(direct, now)
-		p.Orphan = p.Kind == KindFormula && !p.OnRequest && len(p.Dependents) == 0
+		p.Orphan = p.Kind == KindFormula && !p.OnRequest && len(p.AllDependents) == 0
 	}
 }
 
@@ -302,4 +301,69 @@ func daysBetween(t, now time.Time) int {
 		return 0
 	}
 	return int(now.Sub(t).Hours() / 24)
+}
+
+// linkDependencies fills Dependencies, Dependents and AllDependents.
+//
+// A formula's install receipt lists its runtime dependencies transitively
+// (everything it pulls in, at the versions actually installed). The direct
+// edges are recovered by transitive reduction: d is a direct dependency of p
+// unless it is also a dependency of another of p's dependencies. This uses
+// only installed data, so it isn't thrown off by formula aliases or
+// definitions that changed since install.
+func linkDependencies(pkgs []*Package, formulae map[string]*Package) {
+	// closure[p] = every installed formula p needs, directly or not.
+	closure := map[*Package]map[string]bool{}
+	var close func(p *Package, seen map[*Package]bool) map[string]bool
+	close = func(p *Package, seen map[*Package]bool) map[string]bool {
+		if c, ok := closure[p]; ok {
+			return c
+		}
+		c := map[string]bool{}
+		if seen[p] {
+			return c
+		}
+		seen[p] = true
+		for _, d := range p.deps {
+			dep, ok := formulae[d]
+			if !ok || dep == p {
+				continue
+			}
+			c[d] = true
+			if p.Kind == KindCask { // cask deps are direct only; expand them
+				for dd := range close(dep, seen) {
+					c[dd] = true
+				}
+			}
+		}
+		closure[p] = c
+		return c
+	}
+	for _, p := range pkgs {
+		close(p, map[*Package]bool{})
+	}
+
+	for _, p := range pkgs {
+		all := closure[p]
+		for d := range all {
+			indirect := false
+			for e := range all {
+				if e != d && closure[formulae[e]][d] {
+					indirect = true
+					break
+				}
+			}
+			dep := formulae[d]
+			dep.AllDependents = append(dep.AllDependents, p.Name)
+			if !indirect {
+				p.Dependencies = append(p.Dependencies, d)
+				dep.Dependents = append(dep.Dependents, p.Name)
+			}
+		}
+	}
+	for _, p := range pkgs {
+		sort.Strings(p.Dependencies)
+		sort.Strings(p.Dependents)
+		sort.Strings(p.AllDependents)
+	}
 }

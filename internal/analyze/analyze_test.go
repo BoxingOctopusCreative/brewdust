@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,5 +53,32 @@ func TestResolveDependenciesPropagatesActivity(t *testing.T) {
 	}
 	if lib.Orphan || !orphan.Orphan || app.Orphan {
 		t.Errorf("orphan flags wrong: lib=%v orphan=%v app=%v", lib.Orphan, orphan.Orphan, app.Orphan)
+	}
+}
+
+func TestLinkDependenciesFindsDirectEdges(t *testing.T) {
+	now := time.Now()
+	// wget → curl → openssl, and wget's receipt lists both (transitively).
+	// A cask depends on wget only.
+	openssl := &Package{Name: "openssl", Kind: KindFormula, InstalledAt: now}
+	curl := &Package{Name: "curl", Kind: KindFormula, InstalledAt: now, deps: []string{"openssl"}}
+	wget := &Package{Name: "wget", Kind: KindFormula, InstalledAt: now, OnRequest: true, deps: []string{"curl", "openssl"}}
+	app := &Package{Name: "someapp", Kind: KindCask, InstalledAt: now, OnRequest: true, deps: []string{"wget"}}
+
+	resolveDependencies([]*Package{openssl, curl, wget, app}, now)
+
+	check := func(name string, got, want []string) {
+		t.Helper()
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s = %v, want %v", name, got, want)
+		}
+	}
+	check("wget.Dependencies", wget.Dependencies, []string{"curl"})
+	check("openssl.Dependents", openssl.Dependents, []string{"curl"})
+	check("openssl.AllDependents", openssl.AllDependents, []string{"curl", "someapp", "wget"})
+	check("wget.Dependents", wget.Dependents, []string{"someapp"})
+	check("someapp.Dependencies", app.Dependencies, []string{"wget"})
+	if openssl.Orphan || curl.Orphan {
+		t.Error("needed formulae shouldn't be orphans")
 	}
 }
