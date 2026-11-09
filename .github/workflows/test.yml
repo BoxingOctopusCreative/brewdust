@@ -2,6 +2,7 @@ name: Test
 
 on:
   pull_request:
+  workflow_call: # the release workflow runs these before releasing
 
 permissions:
   contents: read

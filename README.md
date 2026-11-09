@@ -232,3 +232,39 @@ The tests don't touch your Homebrew installation. `internal/brewtest` builds a
 fake one in a temporary directory (Cellar and Caskroom files with chosen
 access times) and puts a stub `brew` on `PATH` that answers from it and logs
 every call, so `list`, `remove` and `clean` are tested end to end.
+
+## Releases
+
+Every pull request merged into `main` is released automatically. The release
+workflow runs the tests again, cross-compiles brewdust for macOS and Linux
+(arm64 and amd64), tags the merge commit, and publishes a GitHub release with
+the archives, a `checksums.txt` and notes generated from the merged PRs.
+
+A label on the pull request picks the version bump:
+
+| Label           | Effect                         |
+|-----------------|--------------------------------|
+| `release:major` | v1.4.2 → v2.0.0                |
+| `release:minor` | v1.4.2 → v1.5.0                |
+| `release:patch` | v1.4.2 → v1.4.3 (also no label) |
+| `release:none`  | merge without releasing        |
+
+The first release is v0.1.0 (or v1.0.0 for `release:major`). A check on each
+pull request fails if it has more than one of these labels, and says what
+merging it will release. Commits pushed straight to `main` aren't released;
+run the Release workflow by hand (Actions → Release → Run workflow) to
+release them.
+
+To create the labels once, in a clone of the GitHub repository:
+
+```sh
+gh label create release:major --color B60205 --description "Breaking change: bump the major version"
+gh label create release:minor --color FBCA04 --description "New feature: bump the minor version"
+gh label create release:patch --color 0E8A16 --description "Fix: bump the patch version (the default)"
+gh label create release:none  --color CCCCCC --description "Merge without making a release"
+```
+
+To build the release archives locally: `scripts/release/build.sh v0.0.0-dev dist`.
+
+The binaries aren't signed, so macOS quarantines a downloaded copy. Clear that
+with `xattr -d com.apple.quarantine brewdust` after unpacking.

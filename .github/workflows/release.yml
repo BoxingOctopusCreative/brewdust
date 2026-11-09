@@ -1,0 +1,118 @@
+name: Release
+
+# Every pull request merged into main is released. Its label picks the
+# version bump: release:major, release:minor or release:patch (the default
+# when there's none), or release:none to skip releasing it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
+# Releases go out one at a time, in merge order, so versions never collide.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      bump: ${{ steps.bump.outputs.bump }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # for the tags
+
+      - name: Choose the version bump
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases are made from main, not $GITHUB_REF"
+            exit 1
+          fi
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo "bump=$INPUT_BUMP" >> "$GITHUB_OUTPUT"
+            echo "Manual release: $INPUT_BUMP" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The pull request this push merged, if any.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0] // empty')
+          if [ -z "$pr" ]; then
+            echo "::notice::$GITHUB_SHA wasn't merged from a pull request; not releasing. Run this workflow by hand to release it."
+            echo "bump=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"$pr")
+          if ! bump=$(jq -r '.labels[].name' <<<"$pr" | scripts/release/bump-from-labels.sh 2>&1); then
+            echo "::error::#$number: $bump"
+            exit 1
+          fi
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+          echo "Merged #$number, so the bump is **$bump**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Work out the version
+        id: version
+        if: steps.bump.outputs.bump != 'none'
+        env:
+          BUMP: ${{ steps.bump.outputs.bump }}
+        run: |
+          latest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          version=$(scripts/release/next-version.sh "$latest" "$BUMP")
+          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "::error::$version is already tagged"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "${latest:-no previous release} → **$version**" >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Test
+    needs: plan
+    if: needs.plan.outputs.bump != 'none'
+    uses: ./.github/workflows/test.yml
+
+  release:
+    name: Build and publish ${{ needs.plan.outputs.version }}
+    needs: [plan, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the tag and release
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: scripts/release/build.sh "${{ needs.plan.outputs.version }}" dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          gh release create "$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes

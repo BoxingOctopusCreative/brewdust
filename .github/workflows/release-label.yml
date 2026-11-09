@@ -1,0 +1,36 @@
+name: Release label
+
+# Checks that a pull request has at most one valid release:* label, and says
+# what merging it will release.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check release label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if ! bump=$(jq -r '.[]' <<<"$LABELS" | scripts/release/bump-from-labels.sh 2>&1); then
+            echo "::error::$bump"
+            exit 1
+          fi
+          if [ "$bump" = none ]; then
+            msg="Merging this won't make a release."
+          else
+            msg="Merging this releases a **$bump** version."
+          fi
+          if ! jq -e 'any(.[]; startswith("release:"))' <<<"$LABELS" >/dev/null; then
+            msg="$msg Label it release:minor, release:major or release:none to change that."
+          fi
+          echo "$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
