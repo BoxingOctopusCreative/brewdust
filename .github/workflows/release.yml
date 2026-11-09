@@ -94,7 +94,7 @@ jobs:
   release:
     name: Build and publish ${{ needs.plan.outputs.version }}
     needs: [plan, test]
-    runs-on: ubuntu-latest
+    runs-on: macos-latest # codesign and notarytool only run on macOS
     permissions:
       contents: write # to create the tag and release
     steps:
@@ -104,8 +104,50 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build
+      - name: Import the signing certificate and notary key
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          for secret in CERTIFICATE_P12 CERTIFICATE_PASSWORD NOTARY_KEY_P8; do
+            if [ -z "${!secret}" ]; then
+              echo "::error::Secret for $secret is not set; see Releases → Signing in the README"
+              exit 1
+            fi
+          done
+
+          # A throwaway keychain holding only the Developer ID certificate.
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -base64 32)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          base64 --decode <<<"$CERTIFICATE_P12" > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          # Let codesign use the key without a prompt.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+
+          base64 --decode <<<"$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+          echo "NOTARY_KEY=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
+
+      - name: Build, sign and notarize
+        env:
+          REQUIRE_SIGNING: 1
+          SIGN_IDENTITY: "${{ vars.SIGN_IDENTITY || 'Developer ID Application: Ryan Draga (QA32Z4XU99)' }}"
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
         run: scripts/release/build.sh "${{ needs.plan.outputs.version }}" dist
+
+      - name: Remove the signing keychain and notary key
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary-key.p8"
 
       - name: Publish
         env:
