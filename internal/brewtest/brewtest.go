@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 // Package brewtest builds a fake Homebrew installation for tests: a prefix
 // with Cellar and Caskroom directories holding real files with chosen access
 // times, the matching `brew info --json=v2` data, and optionally a `brew`

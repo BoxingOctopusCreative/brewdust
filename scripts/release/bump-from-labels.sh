@@ -1,4 +1,8 @@
 #!/bin/sh
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # Reads a pull request's label names, one per line, and prints the version
 # bump they ask for: major, minor, patch or none. Without a release:* label
 # it's patch; more than one, or an unknown one, is an error.

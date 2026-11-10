@@ -37,6 +37,15 @@ jobs:
             exit 1
           fi
 
+      - name: Check license notices
+        run: |
+          missing=$(git ls-files '*.go' '*.sh' | xargs grep -L 'subject to the terms of the Mozilla Public' || true)
+          if [ -n "$missing" ]; then
+            echo "These files need the MPL 2.0 notice at the top (copy it from any other file):"
+            echo "$missing"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 
