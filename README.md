@@ -40,6 +40,19 @@ on its own.
 
 ## Install
 
+With Homebrew, from the [taptastic](https://github.com/boxingoctopus/homebrew-taptastic) tap:
+
+```sh
+brew trust boxingoctopus/taptastic
+brew install boxingoctopus/taptastic/brewdust
+```
+
+Homebrew only loads formulae from taps you've trusted, hence `brew trust`.
+The formula installs the signed and notarized release binaries for macOS, or
+the Linux ones on Linux.
+
+Or with Go:
+
 ```sh
 go install github.com/BoxingOctopusCreative/brewdust@latest
 # or, from a checkout
@@ -295,6 +308,29 @@ Delete the exported `.p12` afterwards. The workflow imports the certificate
 into a temporary keychain on a macOS runner and deletes it when the job ends.
 The certificate it signs with defaults to Ryan Draga's; set the
 `SIGN_IDENTITY` repository variable to use another.
+
+### Homebrew
+
+After publishing a release, the workflow regenerates `brewdust.rb` in the
+[boxingoctopus/homebrew-taptastic](https://github.com/boxingoctopus/homebrew-taptastic)
+tap with `scripts/release/formula.sh` and pushes it. It pushes with the
+`TAP_TOKEN` secret: a fine-grained personal access token whose only access is
+**Contents: Read and write** on the tap repository. Without the secret, the
+release still goes out and the workflow warns that the formula wasn't updated.
+Set the `HOMEBREW_TAP` repository variable to publish to a different tap.
+
+To set the token once:
+
+```sh
+gh secret set TAP_TOKEN
+```
+
+To try a formula against a local build before releasing:
+
+```sh
+scripts/release/build.sh v0.0.1 dist
+URL_BASE="file://$PWD/dist" scripts/release/formula.sh v0.0.1 dist/checksums.txt > brewdust.rb
+```
 
 ### Building locally
 
