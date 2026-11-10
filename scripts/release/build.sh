@@ -50,7 +50,7 @@ for platform in $platforms; do
 	CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
 		-ldflags "-s -w -X main.version=$version" \
 		-o "$stage/$name/brewdust" .
-	cp README.md "$stage/$name/"
+	cp README.md LICENSE "$stage/$name/"
 	[ "$os" = darwin ] && macs="$macs $name"
 done
 

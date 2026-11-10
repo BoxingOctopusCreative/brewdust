@@ -308,3 +308,10 @@ notarize them as a release does, with a stored notarytool profile:
 ```sh
 SIGN_IDENTITY="Developer ID Application: Ryan Draga (QA32Z4XU99)" NOTARY_PROFILE=brewdust scripts/release/build.sh v0.0.0-dev dist
 ```
+
+## License
+
+brewdust is licensed under the [Mozilla Public License 2.0](LICENSE). You can
+use it, modify it and ship it in other software, including proprietary
+software; changes to brewdust's own files must be shared under the same
+license.
