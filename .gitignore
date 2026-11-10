@@ -1,2 +1,6 @@
 /brewdust
 /dist/
+
+# Signing keys: the certificate export and the App Store Connect API key
+*.p12
+*.p8
