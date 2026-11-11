@@ -1,0 +1,36 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# The .deb and .rpm packages, built by build.sh with nfpm
+# (https://nfpm.goreleaser.com). It sets VERSION, ARCH and MAINTAINER, and
+# runs nfpm in the folder holding the binary, README.md and LICENSE.
+name: brewdust
+version: ${VERSION}
+version_schema: semver
+arch: ${ARCH}
+platform: linux
+section: utils
+priority: optional
+maintainer: ${MAINTAINER}
+vendor: Boxing Octopus Creative
+homepage: https://github.com/BoxingOctopusCreative/brewdust
+license: MPL-2.0
+description: |
+  Find Homebrew packages gathering dust and clean them up.
+  brewdust reports how much disk each installed Homebrew formula and cask
+  uses and how long it has been since you used it, and removes what you
+  don't need. It needs Homebrew (brew on your PATH).
+
+contents:
+  - src: brewdust
+    dst: /usr/bin/brewdust
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/doc/brewdust/LICENSE
+  - src: README.md
+    dst: /usr/share/doc/brewdust/README.md
+
+rpm:
+  group: Applications/System
