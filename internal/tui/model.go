@@ -58,6 +58,8 @@ var presets = []preset{
 	{"idle ≥ 1y", func(f *app.Filter) { f.StaleDays = 365 }},
 	{"orphans", func(f *app.Filter) { f.Orphans = true }},
 	{"broken casks", func(f *app.Filter) { f.Broken = true }},
+	{"deprecated", func(f *app.Filter) { f.Retiring = true }},
+	{"no formula", func(f *app.Filter) { f.NoFormula = true }},
 }
 
 var kinds = []string{"all", analyze.KindFormula, analyze.KindCask}
@@ -99,7 +101,7 @@ func newModel(e *env, opt Options) Model {
 		sortBy = "size"
 	}
 	p := 0
-	if f.Requested || f.Orphans || f.Broken || f.Needed || f.StaleDays > 0 {
+	if f.Requested || f.Orphans || f.Broken || f.Retiring || f.NoFormula || f.Needed || f.StaleDays > 0 {
 		p = -1
 	}
 	return Model{env: e, mode: modeLoading, filter: f, preset: p, sortBy: sortBy, marked: map[string]bool{}, lastClick: -1}
@@ -524,4 +526,14 @@ func next(list []string, cur string) string {
 		}
 	}
 	return list[0]
+}
+
+// presetIndex returns the index of the named view tab.
+func presetIndex(name string) int {
+	for i, p := range presets {
+		if p.name == name {
+			return i
+		}
+	}
+	return 0
 }

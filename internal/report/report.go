@@ -68,7 +68,7 @@ func NeededBy(p *analyze.Package) string {
 // Notes summarises status flags for a package.
 func Notes(p *analyze.Package, direct bool) string {
 	var n []string
-	if p.Kind == analyze.KindFormula {
+	if p.Kind == analyze.KindFormula && !p.EmptyKeg() {
 		if p.OnRequest {
 			n = append(n, "requested")
 		} else if p.Orphan {
@@ -97,7 +97,38 @@ func Notes(p *analyze.Package, direct bool) string {
 	if len(p.MissingApps) > 0 {
 		n = append(n, "app deleted outside brew")
 	}
+	if s := Status(p); s != "" {
+		n = append(n, s)
+	}
 	return strings.Join(n, "; ")
+}
+
+// Status describes a package brew has deprecated or disabled, or a keg
+// whose formula is gone, in a few words; otherwise it's "".
+func Status(p *analyze.Package) string {
+	var s string
+	switch {
+	case p.EmptyKeg():
+		return "empty Cellar directory"
+	case p.NoFormula:
+		return "no formula (" + p.Origin + ")"
+	case p.Disabled:
+		s = "disabled"
+	case p.Deprecated:
+		s = "deprecated"
+		if p.DisableDate != "" {
+			s += ", disabled from " + p.DisableDate
+		}
+	default:
+		return ""
+	}
+	if p.StatusReason != "" {
+		s += ": " + p.StatusReason
+	}
+	if p.Replacement != "" {
+		s += "; use " + p.Replacement
+	}
+	return s
 }
 
 // Table writes a human-readable report.
@@ -153,7 +184,27 @@ func Summary(w io.Writer, shown, all []*analyze.Package) {
 	if broken > 0 {
 		fmt.Fprintf(w, "Casks whose app was deleted outside brew: %d.\n", broken)
 	}
-	if reclaim > 0 || orphans > 0 || broken > 0 {
+	var deprecated, disabled, noFormula int
+	var noFormulaBytes int64
+	for _, p := range all {
+		switch {
+		case p.NoFormula:
+			noFormula++
+			noFormulaBytes += p.SizeBytes
+		case p.Disabled:
+			disabled++
+		case p.Deprecated:
+			deprecated++
+		}
+	}
+	if noFormula > 0 {
+		fmt.Fprintf(w, "Kegs with no formula: %d using %s (brew can't upgrade these; see `brewdust list --no-formula`).\n",
+			noFormula, Bytes(noFormulaBytes))
+	}
+	if deprecated+disabled > 0 {
+		fmt.Fprintf(w, "Deprecated by brew: %d; disabled: %d (see `brewdust list --deprecated`).\n", deprecated, disabled)
+	}
+	if reclaim > 0 || orphans > 0 || broken > 0 || noFormula > 0 {
 		defer fmt.Fprintln(w, "Run `brewdust clean` to review and remove these.")
 	}
 	if orphans > 0 {

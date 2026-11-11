@@ -332,3 +332,97 @@ func TestConfirm(t *testing.T) {
 		}
 	}
 }
+
+// setupRetired is the standard fixture plus a deprecated and a disabled
+// formula, a keg whose tap is gone and an empty Cellar directory.
+func setupRetired(t *testing.T) *brewtest.Fake {
+	t.Helper()
+	fake := brewtest.Standard(t)
+	fake.Info.Formulae[0].Deprecated = true // jq
+	fake.Info.Formulae[0].DeprecationReason = "versioned_formula"
+	fake.Info.Formulae[0].DisableDate = "2027-01-02"
+	fake.Info.Formulae[2].Deprecated = true // harfbuzz
+	fake.Info.Formulae[2].Disabled = true
+	fake.Info.Formulae[2].DisableReason = "unsupported"
+	fake.OrphanKeg(t, "gone", "2.0", "someone/tools", 4000, true)
+	if err := os.MkdirAll(filepath.Join(fake.Prefix, "Cellar", "wpscan"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake.Install(t)
+	return fake
+}
+
+func TestListDeprecatedAndNoFormula(t *testing.T) {
+	fake := setupRetired(t)
+	out, _, err := brewdust(t, fake, "list", "--deprecated", "--sort", "name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"disabled: is not supported upstream",
+		"deprecated, disabled from 2027-01-02: is a versioned formula",
+		"2 of 8 packages shown",
+		"Deprecated by brew: 1; disabled: 1",
+		"Kegs with no formula: 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--deprecated output lacks %q:\n%s", want, out)
+		}
+	}
+	if rows := strings.Split(out, "\n"); !strings.HasPrefix(rows[1], "harfbuzz ") || !strings.HasPrefix(rows[2], "jq ") {
+		t.Errorf("rows:\n%s", out)
+	}
+
+	out, _, err = brewdust(t, fake, "list", "--no-formula", "--sort", "name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(out, "\n")
+	if !strings.HasPrefix(rows[1], "gone ") || !strings.Contains(rows[1], "requested; no formula (from untapped someone/tools)") ||
+		!strings.HasPrefix(rows[2], "wpscan ") || !strings.Contains(rows[2], "empty Cellar directory") {
+		t.Errorf("--no-formula:\n%s", out)
+	}
+
+	out, _, err = brewdust(t, fake, "list", "--json", "--no-formula")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Packages []map[string]any `json:"packages"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range got.Packages {
+		if p["no_formula"] != true || p["rack"] == nil {
+			t.Errorf("json package = %v", p)
+		}
+	}
+}
+
+func TestCleanKegsWithoutFormula(t *testing.T) {
+	fake := setupRetired(t)
+	empty := filepath.Join(fake.Prefix, "Cellar", "wpscan")
+	out, _, err := brewdust(t, fake, "clean", "-n", "--only", "noformula")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"$ brew uninstall --formula gone", "$ rmdir " + empty} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "harfbuzz") || strings.Contains(out, "jq") {
+		t.Errorf("deprecated formulae aren't cleanup candidates:\n%s", out)
+	}
+
+	if _, _, err := brewdust(t, fake, "clean", "-y", "--only", "noformula"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mutating(t, fake); !slices.Equal(got, []string{"uninstall --formula gone"}) {
+		t.Errorf("brew calls = %q", got)
+	}
+	if _, err := os.Stat(empty); !os.IsNotExist(err) {
+		t.Errorf("%s still exists", empty)
+	}
+}

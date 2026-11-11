@@ -198,3 +198,73 @@ func TestRunProgressEvents(t *testing.T) {
 		t.Errorf("close: run=%v mode=%v status=%q", m.run, m.mode, m.status)
 	}
 }
+
+func TestDeprecatedAndNoFormula(t *testing.T) {
+	now := time.Now()
+	pkgs := []*analyze.Package{
+		{Name: "qt@5", Kind: analyze.KindFormula, SizeBytes: 300, InstalledAt: now, OnRequest: true, Deprecated: true,
+			DeprecationDate: "2026-05-19", DisableDate: "2027-05-19", StatusReason: "is not supported upstream"},
+		{Name: "libsoup@2", Kind: analyze.KindFormula, SizeBytes: 200, InstalledAt: now, OnRequest: true, Deprecated: true,
+			Disabled: true, DisableDate: "2026-09-05", StatusReason: "is not supported upstream", Replacement: "libsoup"},
+		{Name: "gone", Kind: analyze.KindFormula, SizeBytes: 100, InstalledAt: now, Version: "2.0", NoFormula: true,
+			Origin: "from untapped someone/tools", Rack: "/opt/homebrew/Cellar/gone"},
+		{Name: "wpscan", Kind: analyze.KindFormula, InstalledAt: now, NoFormula: true, Rack: "/opt/homebrew/Cellar/wpscan"},
+		{Name: "curl", Kind: analyze.KindFormula, SizeBytes: 50, InstalledAt: now, OnRequest: true},
+	}
+	m := newModel(&env{ctx: context.Background()}, Options{})
+	m.width, m.height = 140, 40
+	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/opt/homebrew", Now: now, Packages: pkgs}})
+
+	for m.presetName() != "deprecated" {
+		m = press(m, r('v'))
+	}
+	if len(m.rows) != 2 || m.rows[0].Name != "qt@5" {
+		t.Fatalf("deprecated view: rows=%v", m.rows)
+	}
+	qt := strings.Join(m.detailLines(m.rows[0], 60, true), "\n")
+	for _, want := range []string{"deprecated since 2026-05-19", "qt@5 is not supported upstream", "to be disabled 2027-05-19"} {
+		if !strings.Contains(qt, want) {
+			t.Errorf("qt@5 details lack %q:\n%s", want, qt)
+		}
+	}
+	soup := strings.Join(m.detailLines(m.rows[1], 60, true), "\n")
+	for _, want := range []string{"disabled since 2026-09-05", "brew suggests libsoup instead"} {
+		if !strings.Contains(soup, want) {
+			t.Errorf("libsoup@2 details lack %q:\n%s", want, soup)
+		}
+	}
+
+	m = press(m, r('v'))
+	if m.presetName() != "no formula" || len(m.rows) != 2 {
+		t.Fatalf("no formula view: %s rows=%v", m.presetName(), m.rows)
+	}
+	var gone, empty *analyze.Package
+	for _, p := range m.rows {
+		if p.Name == "gone" {
+			gone = p
+		} else {
+			empty = p
+		}
+	}
+	if d := strings.Join(m.detailLines(gone, 60, true), "\n"); !strings.Contains(d, "not found · from untapped someone/tools") {
+		t.Errorf("gone details:\n%s", d)
+	}
+	if d := strings.Join(m.detailLines(empty, 60, true), "\n"); !strings.Contains(d, "none · empty Cellar directory") {
+		t.Errorf("wpscan details:\n%s", d)
+	}
+
+	disk := strings.Join(m.diskPane(44, diskPaneH), "\n")
+	if !strings.Contains(disk, "Deprecated") || !strings.Contains(disk, "2 kegs") {
+		t.Errorf("disk pane:\n%s", disk)
+	}
+
+	// The fourth cleanup category handles both kegs.
+	m = press(m, r('c'))
+	if m.dlg == nil || len(m.dlg.steps) != 2 || m.dlg.steps[0].Category != actions.NoFormula {
+		t.Fatalf("clean dialog steps = %+v", m.dlg)
+	}
+	m = press(m, r('4'))
+	if len(m.dlg.steps) != 0 {
+		t.Errorf("toggling no formula off should leave nothing, got %d", len(m.dlg.steps))
+	}
+}

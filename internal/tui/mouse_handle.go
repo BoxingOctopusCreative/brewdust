@@ -142,7 +142,8 @@ func (m Model) mouseList(ev mouseMsg, g geom) (Model, tea.Cmd) {
 		}
 
 	case !inList && g.diskTop >= 0 && ev.Y > g.diskTop && ev.Y < g.diskTop+diskPaneH-1:
-		// Disk pane rows: Formulae, Casks, Idle, Old, Orphans, Broken, Marked.
+		// Disk pane rows: Formulae, Casks, Idle, Old, Orphans, Broken,
+		// Deprecated, No formula, Marked.
 		switch ev.Y - g.diskTop - 1 {
 		case 3:
 			return m.openCleanFor(actions.OldVersions)
@@ -150,6 +151,11 @@ func (m Model) mouseList(ev mouseMsg, g geom) (Model, tea.Cmd) {
 			return m.openCleanFor(actions.Orphans)
 		case 5:
 			return m.openCleanFor(actions.Broken)
+		case 6:
+			m.setPreset(presetIndex("deprecated"))
+			return m, nil
+		case 7:
+			return m.openCleanFor(actions.NoFormula)
 		default:
 			return m.openCleanFor(actions.Categories...)
 		}
@@ -204,7 +210,7 @@ func (m Model) pressStatusKey(x int) (Model, tea.Cmd) {
 // keyFor maps a key hint's name to the key it stands for.
 func keyFor(name string) (tea.KeyMsg, bool) {
 	switch name {
-	case "", "↑↓", "type", "1-3":
+	case "", "↑↓", "type", "1-4":
 		return tea.KeyMsg{}, false
 	case "space":
 		return tea.KeyMsg{Type: tea.KeySpace}, true

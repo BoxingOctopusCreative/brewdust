@@ -30,6 +30,8 @@ type filterFlags struct {
 	requested bool
 	orphans   bool
 	broken    bool
+	retiring  bool
+	noFormula bool
 	needed    bool
 	direct    bool
 	minSize   string
@@ -44,6 +46,8 @@ func (f *filterFlags) register(cmd *cobra.Command) {
 	pf.BoolVar(&f.requested, "requested", false, "only packages you installed explicitly (plus casks)")
 	pf.BoolVar(&f.orphans, "orphans", false, "only dependencies nothing installed needs anymore")
 	pf.BoolVar(&f.broken, "broken", false, "only casks whose app was deleted outside brew")
+	pf.BoolVar(&f.retiring, "deprecated", false, "only formulae and casks brew has deprecated or disabled")
+	pf.BoolVar(&f.noFormula, "no-formula", false, "only kegs whose formula brew can't find anymore")
 	pf.BoolVar(&f.needed, "deps", false, "only packages that other installed packages depend on")
 	pf.BoolVar(&f.direct, "direct", false, "judge idleness by each package's own use, ignoring its dependents")
 	pf.StringVar(&f.minSize, "min-size", "", "only packages at least this big, e.g. 50MB, 1.5GB")
@@ -72,6 +76,8 @@ func (f *filterFlags) filter() (app.Filter, error) {
 		Requested: f.requested,
 		Orphans:   f.orphans,
 		Broken:    f.broken,
+		Retiring:  f.retiring,
+		NoFormula: f.noFormula,
 		Needed:    f.needed,
 		StaleDays: f.staleDays,
 		MinBytes:  min,

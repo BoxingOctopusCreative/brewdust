@@ -31,6 +31,7 @@ type Step struct {
 	Bytes    int64    // estimated space freed
 	Brew     []string // brew arguments, when the step is a brew command
 	Paths    []string // directories to delete, when the step isn't
+	Rmdir    bool     // Paths are empty directories, removed only if still empty
 	// Tasks is the same work split per package, in an order that runs
 	// cleanly one at a time; the TUI uses it to show progress.
 	Tasks []Task
@@ -40,6 +41,9 @@ type Step struct {
 func (s Step) Command() string {
 	if len(s.Brew) > 0 {
 		return "brew " + strings.Join(s.Brew, " ")
+	}
+	if s.Rmdir {
+		return "rmdir " + strings.Join(quoteAll(s.Paths), " ")
 	}
 	return "rm -rf " + strings.Join(quoteAll(s.Paths), " ")
 }
@@ -154,13 +158,14 @@ func uninstallStep(title string, flags []string, pkgs []*analyze.Package) Step {
 type Category string
 
 const (
-	OldVersions Category = "old"     // non-current formula kegs and stale Caskroom versions
-	Orphans     Category = "orphans" // dependencies nothing installed needs
-	Broken      Category = "broken"  // casks whose app was deleted outside brew
+	OldVersions Category = "old"       // non-current formula kegs and stale Caskroom versions
+	Orphans     Category = "orphans"   // dependencies nothing installed needs
+	Broken      Category = "broken"    // casks whose app was deleted outside brew
+	NoFormula   Category = "noformula" // kegs whose formula brew can't find
 )
 
 // Categories lists every cleanup category in the order they run.
-var Categories = []Category{OldVersions, Orphans, Broken}
+var Categories = []Category{OldVersions, Orphans, Broken, NoFormula}
 
 // Describe returns a human-readable label.
 func (c Category) Describe() string {
@@ -171,6 +176,8 @@ func (c Category) Describe() string {
 		return "Orphaned dependencies"
 	case Broken:
 		return "Casks whose app was deleted outside brew"
+	case NoFormula:
+		return "Kegs with no formula"
 	}
 	return string(c)
 }
@@ -184,10 +191,10 @@ func ParseCategories(s string) ([]Category, error) {
 	for _, part := range strings.Split(s, ",") {
 		c := Category(strings.TrimSpace(part))
 		switch c {
-		case OldVersions, Orphans, Broken:
+		case OldVersions, Orphans, Broken, NoFormula:
 			out = append(out, c)
 		default:
-			return nil, fmt.Errorf("unknown cleanup category %q (want old, orphans, broken)", part)
+			return nil, fmt.Errorf("unknown cleanup category %q (want old, orphans, broken, noformula)", part)
 		}
 	}
 	return out, nil
@@ -260,6 +267,36 @@ func PlanCleanup(pkgs []*analyze.Package, cats []Category) []Step {
 			steps = append(steps, s)
 		}
 	}
+	if want[NoFormula] {
+		// brew uninstall finds kegs by their Cellar directory, so it works
+		// without the formula. Kegs something installed still needs are left
+		// alone, and empty directories, which brew can't uninstall, are
+		// deleted directly.
+		kegs := Step{Category: NoFormula, Title: "Uninstall kegs whose formula is gone", Brew: []string{"uninstall", "--formula"}}
+		empty := Step{Category: NoFormula, Title: "Remove empty Cellar directories", Rmdir: true}
+		for _, p := range sorted {
+			switch {
+			case !p.NoFormula || len(p.AllDependents) > 0:
+			case p.EmptyKeg():
+				empty.Paths = append(empty.Paths, p.Rack)
+				empty.Items = append(empty.Items, p.Rack)
+				empty.Tasks = append(empty.Tasks, Task{Label: p.Name, Action: "Removing the empty Cellar directory of",
+					Paths: []string{p.Rack}, Rmdir: true})
+			default:
+				kegs.Brew = append(kegs.Brew, p.Name)
+				kegs.Items = append(kegs.Items, p.Name)
+				kegs.Bytes += p.SizeBytes
+				kegs.Tasks = append(kegs.Tasks, Task{Label: p.Name, Action: "Uninstalling",
+					Bytes: p.SizeBytes, Brew: []string{"uninstall", "--formula", p.Name}})
+			}
+		}
+		if len(kegs.Items) > 0 {
+			steps = append(steps, kegs)
+		}
+		if len(empty.Paths) > 0 {
+			steps = append(steps, empty)
+		}
+	}
 	return steps
 }
 
@@ -294,6 +331,15 @@ func run(ctx context.Context, prefix string, brewArgs, paths []string, out io.Wr
 		return nil
 	}
 	for _, p := range paths {
+		if isEmptyRack(prefix, p) {
+			// os.Remove only deletes an empty directory, so a keg installed
+			// since the scan is never lost.
+			if err := os.Remove(p); err != nil {
+				return fmt.Errorf("removing %s: %w", p, err)
+			}
+			fmt.Fprintf(out, "Removed %s\n", p)
+			continue
+		}
 		if err := checkCaskroomPath(prefix, p); err != nil {
 			return err
 		}
@@ -303,6 +349,17 @@ func run(ctx context.Context, prefix string, brewArgs, paths []string, out io.Wr
 		fmt.Fprintf(out, "Removed %s\n", p)
 	}
 	return nil
+}
+
+// isEmptyRack reports whether p is <prefix>/Cellar/<name>, the only kind of
+// Cellar path a step deletes itself.
+func isEmptyRack(prefix, p string) bool {
+	rel, err := filepath.Rel(filepath.Join(prefix, "Cellar"), filepath.Clean(p))
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, "../") && !strings.Contains(rel, "/") && !strings.HasPrefix(rel, ".")
 }
 
 // checkCaskroomPath refuses to delete anything but <prefix>/Caskroom/<token>/<version>.
@@ -326,16 +383,17 @@ type Task struct {
 	Bytes  int64  // estimated space freed
 	Brew   []string
 	Paths  []string
+	Rmdir  bool
 }
 
 // Command describes the task as a shell-like line.
 func (t Task) Command() string {
-	return Step{Brew: t.Brew, Paths: t.Paths}.Command()
+	return Step{Brew: t.Brew, Paths: t.Paths, Rmdir: t.Rmdir}.Command()
 }
 
 // AsStep wraps a task so it can run through Execute.
 func (t Task) AsStep() Step {
-	return Step{Title: t.Action + " " + t.Label, Items: []string{t.Label}, Bytes: t.Bytes, Brew: t.Brew, Paths: t.Paths}
+	return Step{Title: t.Action + " " + t.Label, Items: []string{t.Label}, Bytes: t.Bytes, Brew: t.Brew, Paths: t.Paths, Rmdir: t.Rmdir}
 }
 
 // AllTasks flattens the steps' tasks in order.

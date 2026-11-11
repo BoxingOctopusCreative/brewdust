@@ -58,11 +58,48 @@ type Package struct {
 	MissingApps    []string  `json:"missing_apps,omitempty"`
 	ScanErrors     int       `json:"scan_errors,omitempty"`
 
+	// Deprecated and Disabled are brew's status for the formula or cask: a
+	// deprecated one is going away, a disabled one can no longer be
+	// installed or upgraded. Either way the installed copy still works.
+	Deprecated      bool   `json:"deprecated,omitempty"`
+	Disabled        bool   `json:"disabled,omitempty"`
+	StatusReason    string `json:"status_reason,omitempty"`
+	DeprecationDate string `json:"deprecation_date,omitempty"`
+	DisableDate     string `json:"disable_date,omitempty"` // when it was, or will be, disabled
+	Replacement     string `json:"replacement,omitempty"`
+
+	// NoFormula marks a keg in the Cellar whose formula brew can't find,
+	// because it was deleted from its tap or the tap was removed. brew
+	// can't upgrade it, and `brew info --installed` leaves it out.
+	NoFormula bool `json:"no_formula,omitempty"`
+	// Origin says where the formula went, from the tap the keg's install
+	// receipt names: "deleted from homebrew/core", "from untapped user/tap"
+	// or "no tap recorded".
+	Origin string `json:"origin,omitempty"`
+	// Rack is the keg's Cellar directory, set for NoFormula packages.
+	Rack string `json:"rack,omitempty"`
+
 	deps []string // as reported: transitive for formulae, direct for casks
 }
 
 // Broken reports a cask whose app was deleted without `brew uninstall`.
 func (p *Package) Broken() bool { return len(p.MissingApps) > 0 }
+
+// Retiring reports a formula or cask brew has deprecated or disabled.
+func (p *Package) Retiring() bool { return p.Deprecated || p.Disabled }
+
+// EmptyKeg reports a Cellar directory with no versions left in it.
+func (p *Package) EmptyKeg() bool { return p.NoFormula && p.Version == "" }
+
+func (p *Package) setLifecycle(l brew.Lifecycle) {
+	p.Deprecated, p.Disabled = l.Deprecated, l.Disabled
+	if !p.Retiring() {
+		return
+	}
+	p.StatusReason = l.Reason()
+	p.DeprecationDate, p.DisableDate = l.DeprecationDate, l.DisableDate
+	p.Replacement = l.Replacement()
+}
 
 type Options struct {
 	Prefix  string
@@ -86,13 +123,22 @@ func Run(info *brew.Info, opt Options) []*Package {
 	var jobs []func()
 	for _, f := range info.Formulae {
 		p := &Package{Name: f.Name, Kind: KindFormula, Desc: f.Desc}
+		p.setLifecycle(f.Lifecycle)
 		pkgs = append(pkgs, p)
 		f := f
 		jobs = append(jobs, func() { scanFormula(p, f, opt) })
 	}
 
+	for _, k := range kegsWithoutFormula(info, opt.Prefix) {
+		p := &Package{Name: k.Name, Kind: KindFormula, NoFormula: true}
+		pkgs = append(pkgs, p)
+		k := k
+		jobs = append(jobs, func() { scanOrphanKeg(p, k, opt) })
+	}
+
 	for _, c := range info.Casks {
 		p := &Package{Name: c.Token, Kind: KindCask, Desc: c.Desc}
+		p.setLifecycle(c.Lifecycle)
 		pkgs = append(pkgs, p)
 		c := c
 		jobs = append(jobs, func() { scanCask(p, c, opt) })
@@ -181,6 +227,89 @@ func scanFormula(p *Package, f brew.Formula, opt Options) {
 		p.LastUsed = &t
 		p.LastUsedEvidence = "atime " + strings.TrimPrefix(used.AccessPath, keg+"/")
 	}
+}
+
+// kegsWithoutFormula finds Cellar directories that no installed formula
+// accounts for, by name or by an old name it was renamed from. For each it
+// builds a stand-in formula from the kegs' install receipts, newest first.
+func kegsWithoutFormula(info *brew.Info, prefix string) []brew.Formula {
+	known := map[string]bool{}
+	for _, f := range info.Formulae {
+		known[f.Name] = true
+		for _, old := range f.Oldnames {
+			known[old] = true
+		}
+	}
+	cellar := filepath.Join(prefix, "Cellar")
+	entries, _ := os.ReadDir(cellar)
+	var out []brew.Formula
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || known[e.Name()] {
+			continue
+		}
+		f := brew.Formula{Name: e.Name(), FullName: e.Name()}
+		versions, _ := os.ReadDir(filepath.Join(cellar, e.Name()))
+		for _, v := range versions {
+			if !v.IsDir() || strings.HasPrefix(v.Name(), ".") {
+				continue
+			}
+			iv := brew.InstalledVersion{Version: v.Name()}
+			if r, err := brew.ReadReceipt(filepath.Join(cellar, e.Name(), v.Name())); err == nil {
+				iv.Time, iv.InstalledOnRequest, iv.RuntimeDependencies = r.Time, r.InstalledOnRequest, r.RuntimeDependencies
+				if f.FullName == e.Name() && r.Source.Tap != "" {
+					f.FullName = r.Source.Tap + "/" + e.Name()
+				}
+			} else if fi, err := v.Info(); err == nil {
+				iv.Time = fi.ModTime().Unix()
+			}
+			f.Installed = append(f.Installed, iv)
+		}
+		// The keg opt/<name> points at is the one in use, as for any formula.
+		if dest, err := os.Readlink(filepath.Join(prefix, "opt", e.Name())); err == nil {
+			f.LinkedKeg = filepath.Base(dest)
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// scanOrphanKeg scans a keg whose formula is gone. All of it goes when it's
+// uninstalled, and `brew cleanup` can't trim its old versions, so none of it
+// counts as reclaimable on its own.
+func scanOrphanKeg(p *Package, f brew.Formula, opt Options) {
+	p.Rack = filepath.Join(opt.Prefix, "Cellar", f.Name)
+	scanFormula(p, f, opt)
+	p.OldVersions, p.ReclaimableBytes, p.OldPaths = 0, 0, nil
+	p.HeldVersions, p.HeldBytes, p.HeldPaths, p.HeldReason = 0, 0, nil, ""
+	if p.Version == "" { // an empty Cellar directory
+		if fi, err := os.Stat(p.Rack); err == nil {
+			p.InstalledAt = fi.ModTime()
+		}
+	}
+
+	switch tap, _, _ := strings.Cut(f.FullName, "/"+f.Name); {
+	case !strings.Contains(f.FullName, "/"):
+		p.Origin = "no tap recorded"
+	case tapInstalled(opt.Prefix, tap) || tap == "homebrew/core" || tap == "homebrew/cask":
+		p.Origin = "deleted from " + tap
+	default:
+		p.Origin = "from untapped " + tap
+	}
+}
+
+// tapInstalled reports whether user/repo is tapped. Taps live in brew's
+// repository: the prefix itself on Apple Silicon, prefix/Homebrew elsewhere.
+func tapInstalled(prefix, tap string) bool {
+	user, repo, ok := strings.Cut(tap, "/")
+	if !ok {
+		return false
+	}
+	for _, repository := range []string{prefix, filepath.Join(prefix, "Homebrew")} {
+		if _, err := os.Stat(filepath.Join(repository, "Library", "Taps", user, "homebrew-"+repo)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // caskroomEligible counts command-line payloads (e.g. adb, flutter) but not
@@ -309,7 +438,7 @@ func resolveDependencies(pkgs []*Package, now time.Time) {
 			direct = *p.LastUsed
 		}
 		p.DirectIdleDays = daysBetween(direct, now)
-		p.Orphan = p.Kind == KindFormula && !p.OnRequest && len(p.AllDependents) == 0
+		p.Orphan = p.Kind == KindFormula && !p.NoFormula && !p.OnRequest && len(p.AllDependents) == 0
 	}
 }
 

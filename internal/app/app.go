@@ -64,6 +64,8 @@ type Filter struct {
 	Requested bool
 	Orphans   bool
 	Broken    bool
+	Retiring  bool // deprecated or disabled by brew
+	NoFormula bool // kegs whose formula brew can't find
 	Needed    bool // only packages something installed directly depends on
 	StaleDays int
 	MinBytes  int64
@@ -85,6 +87,8 @@ func (f Filter) Match(p *analyze.Package) bool {
 		f.Requested && !p.OnRequest,
 		f.Orphans && !p.Orphan,
 		f.Broken && !p.Broken(),
+		f.Retiring && !p.Retiring(),
+		f.NoFormula && !p.NoFormula,
 		f.Needed && len(p.Dependents) == 0,
 		f.Idle(p) < f.StaleDays,
 		p.SizeBytes < f.MinBytes:

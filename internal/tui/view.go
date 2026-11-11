@@ -182,7 +182,7 @@ func (m Model) statusKeys() (string, style.Style, [][2]string) {
 			keys = append(keys, [2]string{"z", "zap"})
 		}
 		if m.dlg.kind == dialogClean {
-			keys = append(keys, [2]string{"1-3", "toggle"})
+			keys = append(keys, [2]string{"1-4", "toggle"})
 		}
 	case m.mode == modeHelp:
 		modeName, modeSt = "HELP", style.New().Background(colBlue).Foreground(colInk).Bold(true)
@@ -547,6 +547,39 @@ func (m Model) detailLines(p *analyze.Package, w int, full bool) []string {
 		add("Missing", paint(stWarn, truncate(a, vw)))
 		add("", paint(stDim, "deleted outside brew · c to clean up"))
 	}
+	if p.NoFormula {
+		if p.EmptyKeg() {
+			add("Formula", paint(stWarn, "none · empty Cellar directory"))
+		} else {
+			add("Formula", paint(stWarn, truncate("not found · "+p.Origin, vw)))
+		}
+		hint := "brew can't upgrade it · c to clean up"
+		if len(p.AllDependents) > 0 {
+			hint = "brew can't upgrade it · still needed, so c leaves it"
+		}
+		add("", paint(stDim, truncate(hint, vw)))
+	}
+	if p.Retiring() {
+		state, since := "deprecated", p.DeprecationDate
+		if p.Disabled {
+			state, since = "disabled", p.DisableDate
+		}
+		if since != "" {
+			state += " since " + since
+		}
+		add("Status", paint(stWarn, state))
+		if p.StatusReason != "" {
+			for _, l := range wrap(p.Name+" "+p.StatusReason, vw) {
+				add("", paint(stDim, l))
+			}
+		}
+		if !p.Disabled && p.DisableDate != "" {
+			add("", paint(stDim, "to be disabled "+p.DisableDate))
+		}
+		if p.Replacement != "" {
+			add("", paint(stDim, truncate("brew suggests "+p.Replacement+" instead", vw)))
+		}
+	}
 	if p.ScanErrors > 0 {
 		add("Unreadable", fmt.Sprintf("%d entries; size may be low", p.ScanErrors))
 	}
@@ -559,8 +592,8 @@ func (m Model) diskPane(w, h int) []string {
 	if m.snap == nil {
 		return pane(w, h, spec)
 	}
-	var total, formulae, casks, old, orphans, stale int64
-	broken := 0
+	var total, formulae, casks, old, orphans, stale, retiring int64
+	broken, noFormula := 0, 0
 	for _, p := range m.snap.Packages {
 		total += p.SizeBytes
 		old += p.ReclaimableBytes
@@ -574,6 +607,12 @@ func (m Model) diskPane(w, h int) []string {
 		}
 		if p.Broken() {
 			broken++
+		}
+		if p.Retiring() {
+			retiring += p.SizeBytes
+		}
+		if p.NoFormula {
+			noFormula++
 		}
 		if m.filter.Idle(p) >= 365 {
 			stale += p.SizeBytes
@@ -590,7 +629,11 @@ func (m Model) diskPane(w, h int) []string {
 	}
 	brokenText := "none"
 	if broken > 0 {
-		brokenText = fmt.Sprintf("%d casks", broken)
+		brokenText = plural(broken, "cask")
+	}
+	noFormulaText := "none"
+	if noFormula > 0 {
+		noFormulaText = plural(noFormula, "keg")
 	}
 	spec.body = []string{
 		row("Formulae", formulae, stGaugeBlue, ""),
@@ -599,10 +642,12 @@ func (m Model) diskPane(w, h int) []string {
 		row("Old vers.", old, stGaugeYellow, ""),
 		row("Orphans", orphans, stGaugeYellow, ""),
 		paint(stDim, fit("Broken", 10)) + " " + fitRight(brokenText, inner-11),
+		row("Deprecated", retiring, stGaugeYellow, ""),
+		paint(stDim, fit("No formula", 10)) + " " + fitRight(noFormulaText, inner-11),
 		row("Marked", m.markedBytes(), stGaugeAccent, ""),
 	}
 	spec.right = report.Bytes(total)
-	if old+orphans > 0 || broken > 0 {
+	if old+orphans > 0 || broken > 0 || noFormula > 0 {
 		spec.footer = paint(stDim, "c to clean up")
 	}
 	return pane(w, h, spec)
@@ -736,7 +781,7 @@ func helpLines() []string {
 		{"s", "cycle sort: size, idle, name, deps"},
 		{"D", "toggle whether dependents count as use"},
 		{"d / x / delete", "remove marked packages (or the selected one)"},
-		{"c", "clean up old versions, orphans and broken casks"},
+		{"c", "clean up old versions, orphans, broken casks and kegs with no formula"},
 		{"r", "rescan"},
 		{"esc", "clear marks, then search"},
 		{"q / ctrl+c", "quit"},
@@ -773,4 +818,12 @@ func neededLabel(p *analyze.Package, w int) string {
 	}
 	more := fmt.Sprintf(" +%d", len(p.Dependents)-1)
 	return fit(strings.TrimRight(fit(p.Dependents[0], w-len(more)), " ")+more, w)
+}
+
+// plural formats a count of things: "1 keg", "2 kegs".
+func plural(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
 }

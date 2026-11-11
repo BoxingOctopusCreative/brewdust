@@ -200,3 +200,62 @@ func TestJSON(t *testing.T) {
 		t.Errorf("harfbuzz = %v", got.Packages[3])
 	}
 }
+
+func TestStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		p    analyze.Package
+		want string
+	}{
+		{"none", analyze.Package{}, ""},
+		{"deprecated", analyze.Package{Deprecated: true, StatusReason: "is a versioned formula"}, "deprecated: is a versioned formula"},
+		{"to be disabled", analyze.Package{Deprecated: true, DisableDate: "2027-08-25", StatusReason: "is not supported upstream"},
+			"deprecated, disabled from 2027-08-25: is not supported upstream"},
+		{"disabled", analyze.Package{Deprecated: true, Disabled: true, DisableDate: "2026-09-05", StatusReason: "is not supported upstream",
+			Replacement: "libsoup"}, "disabled: is not supported upstream; use libsoup"},
+		{"no reason", analyze.Package{Deprecated: true}, "deprecated"},
+		{"no formula", analyze.Package{NoFormula: true, Version: "2.0", Origin: "from untapped someone/tools"},
+			"no formula (from untapped someone/tools)"},
+		{"empty", analyze.Package{NoFormula: true}, "empty Cellar directory"},
+	}
+	for _, c := range cases {
+		if got := Status(&c.p); got != c.want {
+			t.Errorf("%s: Status = %q, want %q", c.name, got, c.want)
+		}
+	}
+	empty := analyze.Package{Kind: analyze.KindFormula, NoFormula: true}
+	if got := Notes(&empty, false); got != "empty Cellar directory" {
+		t.Errorf("an empty directory has no role, got %q", got)
+	}
+	gone := analyze.Package{Kind: analyze.KindFormula, NoFormula: true, Version: "1", OnRequest: true, Origin: "no tap recorded"}
+	if got := Notes(&gone, false); got != "requested; no formula (no tap recorded)" {
+		t.Errorf("Notes = %q", got)
+	}
+}
+
+func TestSummaryStatus(t *testing.T) {
+	var buf bytes.Buffer
+	pkgs := []*analyze.Package{
+		{Name: "a", Deprecated: true},
+		{Name: "b", Deprecated: true, Disabled: true},
+		{Name: "c", Deprecated: true},
+		{Name: "gone", NoFormula: true, Version: "1", SizeBytes: 2_000_000},
+	}
+	Summary(&buf, pkgs, pkgs)
+	out := buf.String()
+	for _, want := range []string{
+		"Kegs with no formula: 1 using 2.0 MB",
+		"Deprecated by brew: 2; disabled: 1",
+		"Run `brewdust clean`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary lacks %q:\n%s", want, out)
+		}
+	}
+
+	buf.Reset()
+	Summary(&buf, pkgs[:1], pkgs[:1])
+	if strings.Contains(buf.String(), "brewdust clean") || strings.Contains(buf.String(), "no formula") {
+		t.Errorf("deprecation alone has nothing to clean:\n%s", buf.String())
+	}
+}

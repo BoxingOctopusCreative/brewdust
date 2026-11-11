@@ -98,10 +98,10 @@ func TestExecuteRefusesPathsOutsideCaskroomVersions(t *testing.T) {
 }
 
 func TestParseCategories(t *testing.T) {
-	if c, _ := ParseCategories(""); len(c) != 3 {
+	if c, _ := ParseCategories(""); len(c) != len(Categories) || c[3] != NoFormula {
 		t.Errorf("empty should mean all, got %v", c)
 	}
-	if c, err := ParseCategories("orphans, broken"); err != nil || len(c) != 2 {
+	if c, err := ParseCategories("orphans, broken,noformula"); err != nil || len(c) != 3 {
 		t.Errorf("got %v, %v", c, err)
 	}
 	if _, err := ParseCategories("everything"); err == nil {
@@ -163,5 +163,67 @@ func TestNeedsTerminal(t *testing.T) {
 	}
 	if NeedsTerminal("Error: No such keg: /opt/homebrew/Cellar/foo") {
 		t.Error("an ordinary error shouldn't")
+	}
+}
+
+func TestPlanCleanupKegsWithoutFormula(t *testing.T) {
+	pkgs := []*analyze.Package{
+		{Name: "gone", Kind: analyze.KindFormula, NoFormula: true, Version: "2.0", SizeBytes: 500, Rack: "/opt/homebrew/Cellar/gone"},
+		{Name: "libgone", Kind: analyze.KindFormula, NoFormula: true, Version: "1.0", SizeBytes: 90,
+			Rack: "/opt/homebrew/Cellar/libgone", AllDependents: []string{"gone", "wget"}},
+		{Name: "wpscan", Kind: analyze.KindFormula, NoFormula: true, Rack: "/opt/homebrew/Cellar/wpscan"},
+		{Name: "jq", Kind: analyze.KindFormula, SizeBytes: 40},
+	}
+	steps := PlanCleanup(pkgs, []Category{NoFormula})
+	var cmds []string
+	for _, s := range steps {
+		cmds = append(cmds, s.Command())
+	}
+	// libgone stays: wget, which isn't being removed, still needs it.
+	want := []string{"brew uninstall --formula gone", "rmdir /opt/homebrew/Cellar/wpscan"}
+	if !reflect.DeepEqual(cmds, want) {
+		t.Errorf("commands = %q\nwant %q", cmds, want)
+	}
+	if TotalBytes(steps) != 500 {
+		t.Errorf("TotalBytes = %d", TotalBytes(steps))
+	}
+	tasks := AllTasks(steps)
+	if len(tasks) != 2 || tasks[0].Command() != "brew uninstall --formula gone" || tasks[1].Command() != "rmdir /opt/homebrew/Cellar/wpscan" {
+		t.Errorf("tasks = %+v", tasks)
+	}
+	if steps[1].Category != NoFormula || NoFormula.Describe() != "Kegs with no formula" {
+		t.Errorf("category %q %q", steps[1].Category, NoFormula.Describe())
+	}
+}
+
+func TestExecuteRemovesOnlyEmptyCellarDirectories(t *testing.T) {
+	prefix := t.TempDir()
+	empty := filepath.Join(prefix, "Cellar", "wpscan")
+	full := filepath.Join(prefix, "Cellar", "refilled")
+	for _, d := range []string{empty, filepath.Join(full, "1.0")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step := Step{Paths: []string{empty}, Rmdir: true}
+	if err := Execute(context.Background(), prefix, step, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(empty); !os.IsNotExist(err) {
+		t.Errorf("%s still exists", empty)
+	}
+	// A keg installed since the scan must survive.
+	if err := Execute(context.Background(), prefix, Step{Paths: []string{full}, Rmdir: true}, &bytes.Buffer{}); err == nil {
+		t.Error("expected an error removing a Cellar directory that isn't empty")
+	}
+	if _, err := os.Stat(filepath.Join(full, "1.0")); err != nil {
+		t.Errorf("keg was removed: %v", err)
+	}
+	// Kegs themselves are never deleted directly.
+	if err := Execute(context.Background(), prefix, Step{Paths: []string{filepath.Join(full, "1.0")}}, &bytes.Buffer{}); err == nil {
+		t.Error("expected a refusal for a keg path")
+	}
+	if _, err := os.Stat(filepath.Join(full, "1.0")); err != nil {
+		t.Errorf("keg was removed: %v", err)
 	}
 }

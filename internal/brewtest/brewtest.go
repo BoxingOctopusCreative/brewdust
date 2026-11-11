@@ -123,6 +123,26 @@ func Standard(t testing.TB) *Fake {
 	return f
 }
 
+// OrphanKeg puts a keg in the Cellar that f.Info doesn't list, as when its
+// formula was deleted or its tap removed: a size-byte binary and an install
+// receipt naming tap ("" for none) and the given runtime dependencies.
+func (f *Fake) OrphanKeg(t testing.TB, name, version, tap string, size int, onRequest bool, deps ...string) {
+	t.Helper()
+	f.File(t, filepath.Join("Cellar", name, version, "bin", name), size, f.Days(300))
+	r := brew.Receipt{Time: f.Days(300).Unix(), InstalledOnRequest: onRequest}
+	r.Source.Tap = tap
+	for _, d := range deps {
+		r.RuntimeDependencies = append(r.RuntimeDependencies, brew.Dep{FullName: d})
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.Prefix, "Cellar", name, version, "INSTALL_RECEIPT.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const script = `#!/bin/sh
 d=%q
 echo "$*" >> "$d/calls.log"

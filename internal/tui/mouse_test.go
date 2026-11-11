@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/phoenix-tui/phoenix/tea"
+
+	"github.com/BoxingOctopusCreative/brewdust/internal/actions"
 	"github.com/BoxingOctopusCreative/brewdust/internal/analyze"
 	"github.com/BoxingOctopusCreative/brewdust/internal/app"
 )
@@ -211,5 +214,24 @@ func TestClickDialog(t *testing.T) {
 	m = click(m, 0, 1) // outside the floating pane
 	if m.mode != modeList {
 		t.Error("click outside should cancel")
+	}
+}
+
+func TestClickDiskRows(t *testing.T) {
+	m := loaded(t, 5)
+	m.width, m.height = 140, 40
+	g := m.geom()
+	if g.diskTop < 0 {
+		t.Fatal("disk pane hidden")
+	}
+	x := g.listW + 3
+	// Row 7, "No formula", opens the cleanup with only that category.
+	if m = click(m, x, g.diskTop+1+7); m.dlg == nil || !m.dlg.cats[actions.NoFormula] || m.dlg.cats[actions.OldVersions] || m.dlg.cats[actions.Broken] {
+		t.Fatalf("no-formula row: dlg = %+v", m.dlg)
+	}
+	m, _ = m.keyDialog(tea.KeyMsg{Type: tea.KeyEsc})
+	// Row 6, "Deprecated", switches to the deprecated view.
+	if m = click(m, x, g.diskTop+1+6); m.presetName() != "deprecated" || m.mode != modeList {
+		t.Errorf("deprecated row: view %q mode %v", m.presetName(), m.mode)
 	}
 }

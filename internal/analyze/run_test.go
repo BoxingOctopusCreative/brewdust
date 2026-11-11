@@ -5,6 +5,7 @@
 package analyze_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,6 +137,100 @@ func TestRunDefaults(t *testing.T) {
 	for _, p := range pkgs {
 		if p.LastActive.IsZero() {
 			t.Errorf("%s has no LastActive", p.Name)
+		}
+	}
+}
+
+func TestRunDeprecatedAndDisabled(t *testing.T) {
+	f := brewtest.Standard(t)
+	f.Info.Formulae[0].Deprecated = true // jq
+	f.Info.Formulae[0].DeprecationDate = "2026-01-02"
+	f.Info.Formulae[0].DeprecationReason = "versioned_formula"
+	f.Info.Formulae[0].DisableDate = "2027-01-02"
+	f.Info.Formulae[3].Deprecated = true // leftover
+	f.Info.Formulae[3].Disabled = true
+	f.Info.Formulae[3].DisableReason = "unmaintained"
+	f.Info.Formulae[3].DisableReplacementFormula = "newer"
+	f.Info.Casks[1].Deprecated = true // viewer
+	f.Info.Casks[1].DeprecationReason = "unsigned"
+	pkgs := map[string]*analyze.Package{}
+	for _, p := range analyze.Run(&f.Info, analyze.Options{Prefix: f.Prefix, Now: f.Now}) {
+		pkgs[p.Name] = p
+	}
+
+	jq := pkgs["jq"]
+	if !jq.Deprecated || jq.Disabled || !jq.Retiring() || jq.StatusReason != "is a versioned formula" ||
+		jq.DeprecationDate != "2026-01-02" || jq.DisableDate != "2027-01-02" {
+		t.Errorf("jq = deprecated %v disabled %v %q %q %q", jq.Deprecated, jq.Disabled, jq.StatusReason, jq.DeprecationDate, jq.DisableDate)
+	}
+	if l := pkgs["leftover"]; !l.Disabled || l.StatusReason != "is not maintained upstream" || l.Replacement != "newer" {
+		t.Errorf("leftover = disabled %v %q %q", l.Disabled, l.StatusReason, l.Replacement)
+	}
+	if v := pkgs["viewer"]; !v.Deprecated || v.StatusReason != "is unsigned or does not meet signature requirements" {
+		t.Errorf("viewer = deprecated %v %q", v.Deprecated, v.StatusReason)
+	}
+	if o := pkgs["oniguruma"]; o.Retiring() || o.StatusReason != "" {
+		t.Errorf("oniguruma should have no status, got %q", o.StatusReason)
+	}
+}
+
+func TestRunKegsWithoutFormula(t *testing.T) {
+	f := brewtest.Standard(t)
+	// A requested tool whose tap was removed, its library (deleted from
+	// homebrew/core) that it still uses, an empty leftover directory, and a
+	// keg kept under a formula's old name, which brew still accounts for.
+	f.OrphanKeg(t, "gone", "2.0", "someone/tools", 4000, true, "libgone")
+	f.OrphanKeg(t, "libgone", "1.0", "homebrew/core", 2000, false)
+	f.OrphanKeg(t, "manual", "0.1", "", 1000, true)
+	f.OrphanKeg(t, "jq-old", "1.0", "homebrew/core", 1000, true)
+	f.Info.Formulae[0].Oldnames = []string{"jq-old"}
+	if err := os.MkdirAll(filepath.Join(f.Prefix, "Cellar", "wpscan"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pkgs := map[string]*analyze.Package{}
+	for _, p := range analyze.Run(&f.Info, analyze.Options{Prefix: f.Prefix, Now: f.Now}) {
+		pkgs[p.Name] = p
+	}
+
+	if p := pkgs["jq-old"]; p != nil {
+		t.Errorf("a formula's old name was reported as having no formula: %+v", p)
+	}
+	gone := pkgs["gone"]
+	if gone == nil || !gone.NoFormula || gone.Kind != analyze.KindFormula || gone.Version != "2.0" || !gone.OnRequest {
+		t.Fatalf("gone = %+v", gone)
+	}
+	if gone.Origin != "from untapped someone/tools" || gone.SizeBytes < 4000 || gone.Orphan {
+		t.Errorf("gone origin %q size %d orphan %v", gone.Origin, gone.SizeBytes, gone.Orphan)
+	}
+	if gone.Rack != filepath.Join(f.Prefix, "Cellar", "gone") || !gone.InstalledAt.Equal(time.Unix(f.Days(300).Unix(), 0)) {
+		t.Errorf("gone rack %q installed %v", gone.Rack, gone.InstalledAt)
+	}
+	lib := pkgs["libgone"]
+	if lib.Origin != "deleted from homebrew/core" || len(lib.Dependents) != 1 || lib.Dependents[0] != "gone" || lib.Orphan {
+		t.Errorf("libgone origin %q dependents %v orphan %v", lib.Origin, lib.Dependents, lib.Orphan)
+	}
+	if m := pkgs["manual"]; m.Origin != "no tap recorded" {
+		t.Errorf("manual origin %q", m.Origin)
+	}
+	empty := pkgs["wpscan"]
+	if empty == nil || !empty.EmptyKeg() || empty.SizeBytes != 0 || empty.InstalledAt.IsZero() {
+		t.Errorf("wpscan = %+v", empty)
+	}
+	if jq := pkgs["jq"]; jq.NoFormula || jq.EmptyKeg() {
+		t.Error("jq has a formula")
+	}
+}
+
+func TestRunNoFormulaOriginForAnInstalledTap(t *testing.T) {
+	f := brewtest.Standard(t)
+	f.OrphanKeg(t, "removed", "1.0", "someone/tools", 100, true)
+	// Intel and Linux keep taps in prefix/Homebrew.
+	if err := os.MkdirAll(filepath.Join(f.Prefix, "Homebrew/Library/Taps/someone/homebrew-tools"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range analyze.Run(&f.Info, analyze.Options{Prefix: f.Prefix, Now: f.Now}) {
+		if p.Name == "removed" && p.Origin != "deleted from someone/tools" {
+			t.Errorf("origin = %q", p.Origin)
 		}
 	}
 }

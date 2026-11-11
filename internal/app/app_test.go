@@ -38,10 +38,10 @@ func pkgs() []*analyze.Package {
 		{Name: "jq", Kind: analyze.KindFormula, Desc: "JSON processor", SizeBytes: 2_000, OnRequest: true, IdleDays: 5, DirectIdleDays: 5},
 		{Name: "oniguruma", Kind: analyze.KindFormula, Desc: "Regex library", SizeBytes: 500, IdleDays: 5, DirectIdleDays: 200,
 			Dependents: []string{"jq"}, AllDependents: []string{"jq", "tool"}},
-		{Name: "leftover", Kind: analyze.KindFormula, SizeBytes: 300, IdleDays: 400, DirectIdleDays: 400, Orphan: true},
+		{Name: "leftover", Kind: analyze.KindFormula, SizeBytes: 300, IdleDays: 400, DirectIdleDays: 400, Orphan: true, Deprecated: true},
 		{Name: "tool", Kind: analyze.KindCask, Desc: "A tool", SizeBytes: 9_000, OnRequest: true, IdleDays: 30, DirectIdleDays: 30,
 			MissingApps: []string{"/Applications/Tool.app"}, AllDependents: []string{"x"}},
-		{Name: "jq", Kind: analyze.KindCask, Desc: "A cask sharing a formula's name", SizeBytes: 1},
+		{Name: "jq", Kind: analyze.KindCask, Desc: "A cask sharing a formula's name", SizeBytes: 1, Disabled: true},
 	}
 }
 
@@ -66,6 +66,7 @@ func TestFilter(t *testing.T) {
 		{"requested", Filter{Requested: true}, "jq/f tool/c"},
 		{"orphans", Filter{Orphans: true}, "leftover/f"},
 		{"broken", Filter{Broken: true}, "tool/c"},
+		{"deprecated or disabled", Filter{Retiring: true}, "leftover/f jq/c"},
 		{"needed", Filter{Needed: true}, "oniguruma/f"},
 		{"stale", Filter{StaleDays: 30}, "leftover/f tool/c"},
 		{"stale, direct", Filter{StaleDays: 30, Direct: true}, "oniguruma/f leftover/f tool/c"},
@@ -79,6 +80,10 @@ func TestFilter(t *testing.T) {
 		if got := names(c.f.Apply(pkgs())); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
+	}
+	withKeg := append(pkgs(), &analyze.Package{Name: "gone", Kind: analyze.KindFormula, NoFormula: true})
+	if got := names(Filter{NoFormula: true}.Apply(withKeg)); got != "gone/f" {
+		t.Errorf("no formula: got %q", got)
 	}
 }
 

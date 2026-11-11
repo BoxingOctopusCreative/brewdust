@@ -19,7 +19,7 @@ type geom struct {
 	diskTop int // top border row of the Disk pane, -1 if hidden
 }
 
-const diskPaneH = 10
+const diskPaneH = 12
 
 func (m Model) geom() geom {
 	w, h := max(m.width, 40), max(m.height, 10)

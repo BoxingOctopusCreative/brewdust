@@ -137,3 +137,65 @@ func TestLoadReportsBrewErrors(t *testing.T) {
 		t.Errorf("missing brew: err = %v", err)
 	}
 }
+
+func TestLifecycle(t *testing.T) {
+	var info brew.Info
+	data := `{"formulae":[
+		{"name":"openssl@1.1","oldnames":["openssl11"],"deprecated":true,"deprecation_date":"2023-11-11",
+		 "deprecation_reason":"unsupported","deprecation_replacement_formula":null,"disabled":false,"disable_date":null},
+		{"name":"libsoup@2","deprecated":true,"deprecation_reason":"unsupported","disabled":true,
+		 "disable_date":"2026-09-05","disable_reason":"repo_archived","disable_replacement_formula":"libsoup"},
+		{"name":"custom","deprecated":true,"deprecation_reason":"Use something newer"}],
+	 "casks":[{"token":"oldapp","old_tokens":["old-app"],"deprecated":true,"deprecation_reason":"unsigned",
+		 "deprecation_replacement_cask":"newapp"}]}`
+	if err := json.Unmarshal([]byte(data), &info); err != nil {
+		t.Fatal(err)
+	}
+	ssl, soup, custom, cask := info.Formulae[0], info.Formulae[1], info.Formulae[2], info.Casks[0]
+	if !ssl.Deprecated || ssl.Disabled || ssl.DisableDate != "" || ssl.Oldnames[0] != "openssl11" {
+		t.Errorf("openssl@1.1 = %+v", ssl.Lifecycle)
+	}
+	if got := ssl.Reason(); got != "is not supported upstream" {
+		t.Errorf("openssl@1.1 Reason = %q", got)
+	}
+	if ssl.Replacement() != "" {
+		t.Errorf("a null replacement should be empty, got %q", ssl.Replacement())
+	}
+	// A disabled formula's own reason wins over its deprecation reason.
+	if got := soup.Reason(); got != "has an archived upstream repository" {
+		t.Errorf("libsoup@2 Reason = %q", got)
+	}
+	if soup.Replacement() != "libsoup" {
+		t.Errorf("libsoup@2 Replacement = %q", soup.Replacement())
+	}
+	if got := custom.Reason(); got != "Use something newer" {
+		t.Errorf("free-text reason = %q", got)
+	}
+	if cask.Reason() != "is unsigned or does not meet signature requirements" || cask.Replacement() != "newapp" ||
+		cask.OldTokens[0] != "old-app" {
+		t.Errorf("cask = %+v", cask)
+	}
+	if got := brew.ReasonText("some_new_code"); got != "some new code" {
+		t.Errorf("unknown code = %q", got)
+	}
+}
+
+func TestReadReceipt(t *testing.T) {
+	keg := t.TempDir()
+	receipt := `{"time":1700000000,"installed_on_request":true,"source":{"tap":"someone/tools"},
+		"runtime_dependencies":[{"full_name":"openssl@3","version":"3.4.0"}]}`
+	if err := os.WriteFile(filepath.Join(keg, "INSTALL_RECEIPT.json"), []byte(receipt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := brew.ReadReceipt(keg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Time != 1700000000 || !r.InstalledOnRequest || r.Source.Tap != "someone/tools" ||
+		len(r.RuntimeDependencies) != 1 || r.RuntimeDependencies[0].FullName != "openssl@3" {
+		t.Errorf("receipt = %+v", r)
+	}
+	if _, err := brew.ReadReceipt(t.TempDir()); err == nil {
+		t.Error("expected an error for a keg without a receipt")
+	}
+}
