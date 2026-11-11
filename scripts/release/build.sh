@@ -4,7 +4,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 # Cross-compiles brewdust VERSION into OUTDIR as one .tar.gz per platform,
-# plus a checksums.txt.
+# .deb and .rpm packages of the Linux binaries, and a checksums.txt.
 #
 #   scripts/release/build.sh v0.1.0 dist
 #
@@ -25,6 +25,9 @@ version=${1:?usage: build.sh VERSION OUTDIR}
 out=${2:?usage: build.sh VERSION OUTDIR}
 platforms=${PLATFORMS:-darwin/arm64 darwin/amd64 linux/arm64 linux/amd64}
 identifier=com.boxingoctopuscreative.brewdust
+# Builds the .deb and .rpm packages; set NFPM to use an installed nfpm.
+nfpm=${NFPM:-go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3}
+maintainer=${MAINTAINER:-Boxing Octopus <ryan.draga@boxingoctop.us>}
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 rm -rf "$out"
@@ -95,10 +98,21 @@ for name in $names; do
 	tar -C "$stage" -czf "$out/$name.tar.gz" "$name"
 done
 
+# .deb and .rpm packages of the Linux binaries.
+for name in $names; do
+	case $name in *_linux_*) ;; *) continue ;; esac
+	for packager in deb rpm; do
+		echo "packaging $name as .$packager"
+		# From the staged folder, which holds the binary, README.md and LICENSE.
+		(cd "$stage/$name" && VERSION=$version ARCH=${name##*_} MAINTAINER=$maintainer \
+			$nfpm package --config "$root/scripts/release/nfpm.yaml" --packager "$packager" --target "$out/" >/dev/null)
+	done
+done
+
 cd "$out"
 if command -v sha256sum >/dev/null; then
-	sha256sum ./*.tar.gz | sed 's| \./| |' >checksums.txt
+	sha256sum ./*.tar.gz ./*.deb ./*.rpm 2>/dev/null | sed 's| \./| |' >checksums.txt
 else
-	shasum -a 256 ./*.tar.gz | sed 's| \./| |' >checksums.txt
+	shasum -a 256 ./*.tar.gz ./*.deb ./*.rpm 2>/dev/null | sed 's| \./| |' >checksums.txt
 fi
 cat checksums.txt

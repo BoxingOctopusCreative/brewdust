@@ -50,6 +50,18 @@ brew install boxingoctopus/taptastic/brewdust
 Homebrew only loads formulae from taps you've trusted, hence `brew trust`.
 The formula installs the prebuilt release binaries for macOS and Linux.
 
+On Debian, Ubuntu, Fedora and other Linux distributions, each
+[release](https://github.com/BoxingOctopusCreative/brewdust/releases) also has
+`.deb` and `.rpm` packages for arm64 and amd64:
+
+```sh
+sudo apt install ./brewdust_0.3.0_amd64.deb     # Debian, Ubuntu
+sudo dnf install ./brewdust-0.3.0-1.x86_64.rpm  # Fedora, RHEL
+```
+
+They install `/usr/bin/brewdust`, which still needs Homebrew on Linux to have
+anything to report on.
+
 Or with Go:
 
 ```sh
@@ -250,7 +262,9 @@ every call, so `list`, `remove` and `clean` are tested end to end.
 Every pull request merged into `main` is released automatically. The release
 workflow runs the tests again, cross-compiles brewdust for macOS and Linux
 (arm64 and amd64), tags the merge commit, and publishes a GitHub release with
-the archives, a `checksums.txt` and notes generated from the merged PRs.
+the archives, `.deb` and `.rpm` packages of the Linux binaries (built with
+[nfpm](https://nfpm.goreleaser.com) from `scripts/release/nfpm.yaml`), a
+`checksums.txt` and notes generated from the merged PRs.
 
 A label on the pull request picks the version bump:
 
