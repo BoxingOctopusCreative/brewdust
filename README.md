@@ -48,8 +48,7 @@ brew install boxingoctopus/taptastic/brewdust
 ```
 
 Homebrew only loads formulae from taps you've trusted, hence `brew trust`.
-The formula installs the signed and notarized release binaries for macOS, or
-the Linux ones on Linux.
+The formula installs the prebuilt release binaries for macOS and Linux.
 
 Or with Go:
 
@@ -277,53 +276,11 @@ gh label create release:patch --color 0E8A16 --description "Fix: bump the patch 
 gh label create release:none  --color CCCCCC --description "Merge without making a release"
 ```
 
-### Signing
-
-The macOS binaries are signed with a Developer ID Application certificate and
-notarized by Apple, so they run without a Gatekeeper warning when downloaded.
-The release fails rather than publish unsigned macOS binaries. It needs these
-repository secrets (Settings → Secrets and variables → Actions):
-
-| Secret                       | What it is                                                     |
-|------------------------------|----------------------------------------------------------------|
-| `MACOS_CERTIFICATE_P12`      | The Developer ID Application certificate and its private key, as a base64 `.p12` |
-| `MACOS_CERTIFICATE_PASSWORD` | The password the `.p12` was exported with                       |
-| `NOTARY_KEY_P8`              | An App Store Connect API key (`AuthKey_….p8`), base64            |
-| `NOTARY_KEY_ID`              | That key's ID                                                   |
-| `NOTARY_ISSUER_ID`           | The issuer ID shown above the list of keys in App Store Connect |
-
-To export the certificate, open Keychain Access, find "Developer ID
-Application: …" under My Certificates, and choose File → Export Items… as a
-`.p12` with a password. Then, from a clone of the GitHub repository:
-
-```sh
-base64 -i DeveloperID.p12 | gh secret set MACOS_CERTIFICATE_P12
-gh secret set MACOS_CERTIFICATE_PASSWORD
-base64 -i ~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8 | gh secret set NOTARY_KEY_P8
-gh secret set NOTARY_KEY_ID --body XXXXXXXXXX
-gh secret set NOTARY_ISSUER_ID --body xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-Delete the exported `.p12` afterwards. The workflow imports the certificate
-into a temporary keychain on a macOS runner and deletes it when the job ends.
-The certificate it signs with defaults to Ryan Draga's; set the
-`SIGN_IDENTITY` repository variable to use another.
-
 ### Homebrew
 
 After publishing a release, the workflow regenerates `brewdust.rb` in the
 [boxingoctopus/homebrew-taptastic](https://github.com/boxingoctopus/homebrew-taptastic)
-tap with `scripts/release/formula.sh` and pushes it. It pushes with the
-`TAP_TOKEN` secret: a fine-grained personal access token whose only access is
-**Contents: Read and write** on the tap repository. Without the secret, the
-release still goes out and the workflow warns that the formula wasn't updated.
-Set the `HOMEBREW_TAP` repository variable to publish to a different tap.
-
-To set the token once:
-
-```sh
-gh secret set TAP_TOKEN
-```
+tap with `scripts/release/formula.sh` and pushes it.
 
 To try a formula against a local build before releasing:
 
@@ -336,13 +293,6 @@ URL_BASE="file://$PWD/dist" scripts/release/formula.sh v0.0.1 dist/checksums.txt
 
 ```sh
 scripts/release/build.sh v0.0.0-dev dist
-```
-
-That leaves the macOS binaries unsigned (with a warning). To sign and
-notarize them as a release does, with a stored notarytool profile:
-
-```sh
-SIGN_IDENTITY="Developer ID Application: Ryan Draga (QA32Z4XU99)" NOTARY_PROFILE=brewdust scripts/release/build.sh v0.0.0-dev dist
 ```
 
 ## License
