@@ -76,8 +76,20 @@ type Package struct {
 	// receipt names: "deleted from homebrew/core", "from untapped user/tap"
 	// or "no tap recorded".
 	Origin string `json:"origin,omitempty"`
-	// Rack is the keg's Cellar directory, set for NoFormula packages.
-	Rack string `json:"rack,omitempty"`
+	// Root is where brew keeps the package: Cellar/<name> for a formula,
+	// Caskroom/<token> for a cask.
+	Root string `json:"root,omitempty"`
+
+	// Unlinked marks a formula that isn't keg-only, yet has no version
+	// linked into the prefix, so its commands aren't on PATH. `brew link`
+	// fixes it unless something else already owns those paths.
+	Unlinked bool `json:"unlinked,omitempty"`
+
+	// Permission problems under Root, which make brew fail to upgrade,
+	// clean up or uninstall the package with "Permission denied".
+	ForeignOwned int `json:"foreign_owned,omitempty"` // entries owned by another user
+	LockedPaths  int `json:"locked_paths,omitempty"`  // directories missing u+rwx, files missing u+r
+	DeniedPaths  int `json:"denied_paths,omitempty"`  // entries that couldn't be read at all
 
 	deps []string // as reported: transitive for formulae, direct for casks
 }
@@ -87,6 +99,18 @@ func (p *Package) Broken() bool { return len(p.MissingApps) > 0 }
 
 // Retiring reports a formula or cask brew has deprecated or disabled.
 func (p *Package) Retiring() bool { return p.Deprecated || p.Disabled }
+
+// BadPermissions reports whether anything under Root has a permission problem.
+func (p *Package) BadPermissions() bool { return p.ForeignOwned+p.LockedPaths+p.DeniedPaths > 0 }
+
+// NeedsFix reports a problem `brewdust fix` can repair.
+func (p *Package) NeedsFix() bool { return p.Unlinked || p.BadPermissions() }
+
+func (p *Package) addPermissions(r scan.Result) {
+	p.ForeignOwned += r.Foreign
+	p.LockedPaths += r.Locked
+	p.DeniedPaths += r.Denied
+}
 
 // EmptyKeg reports a Cellar directory with no versions left in it.
 func (p *Package) EmptyKeg() bool { return p.NoFormula && p.Version == "" }
@@ -193,11 +217,13 @@ func scanFormula(p *Package, f brew.Formula, opt Options) {
 	p.Version = cur.Version
 	p.InstalledAt = time.Unix(cur.Time, 0)
 	p.OnRequest = cur.InstalledOnRequest
+	p.Unlinked = !f.KegOnly && f.LinkedKeg == ""
 	for _, d := range cur.RuntimeDependencies {
 		p.deps = append(p.deps, brew.ShortName(d.FullName))
 	}
 
 	keg := filepath.Join(opt.Prefix, "Cellar", f.Name)
+	p.Root = keg
 	var used scan.Result
 	for _, iv := range f.Installed {
 		r := scan.Dir(filepath.Join(keg, iv.Version), func(rel string) bool {
@@ -205,6 +231,7 @@ func scanFormula(p *Package, f brew.Formula, opt Options) {
 		})
 		p.SizeBytes += r.Bytes
 		p.ScanErrors += r.Errors
+		p.addPermissions(r)
 		if iv.Version != cur.Version && r.Exists {
 			path := filepath.Join(keg, iv.Version)
 			if reason := f.CleanupSkipReason(); reason != "" {
@@ -277,12 +304,13 @@ func kegsWithoutFormula(info *brew.Info, prefix string) []brew.Formula {
 // uninstalled, and `brew cleanup` can't trim its old versions, so none of it
 // counts as reclaimable on its own.
 func scanOrphanKeg(p *Package, f brew.Formula, opt Options) {
-	p.Rack = filepath.Join(opt.Prefix, "Cellar", f.Name)
+	p.Root = filepath.Join(opt.Prefix, "Cellar", f.Name)
 	scanFormula(p, f, opt)
 	p.OldVersions, p.ReclaimableBytes, p.OldPaths = 0, 0, nil
+	p.Unlinked = false // brew can't link a keg without its formula
 	p.HeldVersions, p.HeldBytes, p.HeldPaths, p.HeldReason = 0, 0, nil, ""
 	if p.Version == "" { // an empty Cellar directory
-		if fi, err := os.Stat(p.Rack); err == nil {
+		if fi, err := os.Stat(p.Root); err == nil {
 			p.InstalledAt = fi.ModTime()
 		}
 	}
@@ -345,12 +373,14 @@ func scanCask(p *Package, c brew.Cask, opt Options) {
 	// Caskroom/<token>/ holds the current version, possibly leftovers from
 	// older or interrupted upgrades ("1.2.3.upgrading"), and .metadata.
 	room := filepath.Join(opt.Prefix, "Caskroom", c.Token)
+	p.Root = room
 	entries, _ := os.ReadDir(room)
 	for _, e := range entries {
 		dir := filepath.Join(room, e.Name())
 		r := scan.Dir(dir, caskroomEligible)
 		p.SizeBytes += r.Bytes
 		p.ScanErrors += r.Errors
+		p.addPermissions(r)
 		if e.Name() == ".metadata" {
 			continue
 		}

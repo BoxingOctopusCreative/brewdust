@@ -5,6 +5,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/phoenix-tui/phoenix/tea"
@@ -143,7 +144,7 @@ func (m Model) mouseList(ev mouseMsg, g geom) (Model, tea.Cmd) {
 
 	case !inList && g.diskTop >= 0 && ev.Y > g.diskTop && ev.Y < g.diskTop+diskPaneH-1:
 		// Disk pane rows: Formulae, Casks, Idle, Old, Orphans, Broken,
-		// Deprecated, No formula, Marked.
+		// Deprecated, No formula, Needs fix, Marked.
 		switch ev.Y - g.diskTop - 1 {
 		case 3:
 			return m.openCleanFor(actions.OldVersions)
@@ -156,6 +157,8 @@ func (m Model) mouseList(ev mouseMsg, g geom) (Model, tea.Cmd) {
 			return m, nil
 		case 7:
 			return m.openCleanFor(actions.NoFormula)
+		case 8:
+			return m.openFix()
 		default:
 			return m.openCleanFor(actions.Categories...)
 		}
@@ -191,7 +194,7 @@ func (m Model) mouseDialog(ev mouseMsg) (Model, tea.Cmd) {
 		case col > runW && col <= runW+visibleWidth(pill("esc", "cancel")):
 			return m.keyDialog(tea.KeyMsg{Type: tea.KeyEsc})
 		}
-	case m.dlg.kind == dialogClean && line >= 0 && line < len(actions.Categories):
+	case m.dlg.hasCategories() && line >= 0 && line < len(m.dlg.catList):
 		return m.keyDialog(tea.KeyMsg{Type: tea.KeyRune, Rune: rune('1' + line)})
 	case m.dlg.kind == dialogRemove && line == last-2 && hasCask(m.dlg.targets):
 		return m.keyDialog(tea.KeyMsg{Type: tea.KeyRune, Rune: 'z'})
@@ -210,7 +213,7 @@ func (m Model) pressStatusKey(x int) (Model, tea.Cmd) {
 // keyFor maps a key hint's name to the key it stands for.
 func keyFor(name string) (tea.KeyMsg, bool) {
 	switch name {
-	case "", "↑↓", "type", "1-4":
+	case "", "↑↓", "type":
 		return tea.KeyMsg{}, false
 	case "space":
 		return tea.KeyMsg{Type: tea.KeySpace}, true
@@ -220,6 +223,9 @@ func keyFor(name string) (tea.KeyMsg, bool) {
 		return tea.KeyMsg{Type: tea.KeyEsc}, true
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}, true
+	}
+	if strings.HasPrefix(name, "1-") { // "1-4": a range, not a key
+		return tea.KeyMsg{}, false
 	}
 	return tea.KeyMsg{Type: tea.KeyRune, Rune: []rune(name)[0]}, true
 }
@@ -308,7 +314,7 @@ func (m *Model) setPreset(i int) {
 // openCleanFor opens the cleanup dialog with only the given categories on.
 func (m *Model) openCleanFor(cats ...actions.Category) (Model, tea.Cmd) {
 	mm, cmd := m.openClean()
-	for _, c := range actions.Categories {
+	for _, c := range mm.dlg.catList {
 		mm.dlg.cats[c] = false
 	}
 	for _, c := range cats {

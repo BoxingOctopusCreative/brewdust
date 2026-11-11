@@ -67,7 +67,7 @@ func TestMarkFilterAndRemoveDialog(t *testing.T) {
 	}
 	m := newModel(&env{ctx: context.Background()}, Options{})
 	m.width, m.height = 120, 30
-	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/opt/homebrew", Now: now, Packages: pkgs}})
+	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/nonexistent/homebrew", Now: now, Packages: pkgs}})
 
 	if m.mode != modeList || len(m.rows) != 3 || m.rows[0].Name != "openssl" {
 		t.Fatalf("after load: mode=%v rows=%d", m.mode, len(m.rows))
@@ -207,13 +207,13 @@ func TestDeprecatedAndNoFormula(t *testing.T) {
 		{Name: "libsoup@2", Kind: analyze.KindFormula, SizeBytes: 200, InstalledAt: now, OnRequest: true, Deprecated: true,
 			Disabled: true, DisableDate: "2026-09-05", StatusReason: "is not supported upstream", Replacement: "libsoup"},
 		{Name: "gone", Kind: analyze.KindFormula, SizeBytes: 100, InstalledAt: now, Version: "2.0", NoFormula: true,
-			Origin: "from untapped someone/tools", Rack: "/opt/homebrew/Cellar/gone"},
-		{Name: "wpscan", Kind: analyze.KindFormula, InstalledAt: now, NoFormula: true, Rack: "/opt/homebrew/Cellar/wpscan"},
+			Origin: "from untapped someone/tools", Root: "/nonexistent/homebrew/Cellar/gone"},
+		{Name: "wpscan", Kind: analyze.KindFormula, InstalledAt: now, NoFormula: true, Root: "/nonexistent/homebrew/Cellar/wpscan"},
 		{Name: "curl", Kind: analyze.KindFormula, SizeBytes: 50, InstalledAt: now, OnRequest: true},
 	}
 	m := newModel(&env{ctx: context.Background()}, Options{})
 	m.width, m.height = 140, 40
-	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/opt/homebrew", Now: now, Packages: pkgs}})
+	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/nonexistent/homebrew", Now: now, Packages: pkgs}})
 
 	for m.presetName() != "deprecated" {
 		m = press(m, r('v'))
@@ -266,5 +266,62 @@ func TestDeprecatedAndNoFormula(t *testing.T) {
 	m = press(m, r('4'))
 	if len(m.dlg.steps) != 0 {
 		t.Errorf("toggling no formula off should leave nothing, got %d", len(m.dlg.steps))
+	}
+}
+
+func TestFixDialog(t *testing.T) {
+	now := time.Now()
+	pkgs := []*analyze.Package{
+		{Name: "glide", Kind: analyze.KindFormula, SizeBytes: 300, InstalledAt: now, OnRequest: true, Unlinked: true},
+		{Name: "go", Kind: analyze.KindFormula, SizeBytes: 200, InstalledAt: now, OnRequest: true,
+			Root: "/nonexistent/homebrew/Cellar/go", LockedPaths: 30, ForeignOwned: 2},
+		{Name: "curl", Kind: analyze.KindFormula, SizeBytes: 50, InstalledAt: now, OnRequest: true, Root: "/nonexistent/homebrew/Cellar/curl"},
+	}
+	m := newModel(&env{ctx: context.Background()}, Options{})
+	m.width, m.height = 140, 40
+	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/nonexistent/homebrew", Now: now, Packages: pkgs}})
+
+	for m.presetName() != "needs fix" {
+		m = press(m, r('v'))
+	}
+	if len(m.rows) != 2 {
+		t.Fatalf("needs fix view: rows=%v", m.rows)
+	}
+	glide := strings.Join(m.detailLines(pkgs[0], 60, true), "\n")
+	if !strings.Contains(glide, "no · f to link") {
+		t.Errorf("glide details:\n%s", glide)
+	}
+	gov := strings.Join(m.detailLines(pkgs[1], 60, true), "\n")
+	if !strings.Contains(gov, "2 owned by another user, 30 missing owner") || !strings.Contains(gov, "f to fix") {
+		t.Errorf("go details:\n%s", gov)
+	}
+	if disk := strings.Join(m.diskPane(44, diskPaneH), "\n"); !strings.Contains(disk, "2 packages") || !strings.Contains(disk, "f to fix") {
+		t.Errorf("disk pane:\n%s", disk)
+	}
+
+	m = press(m, r('f'))
+	if m.dlg == nil || m.dlg.kind != dialogFix || len(m.dlg.steps) != 3 {
+		t.Fatalf("fix dialog = %+v", m.dlg)
+	}
+	view := m.View()
+	for _, want := range []string{"Fix", "Unlinked kegs", "Broken permissions", "sudo needs your password", "1-2"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("fix dialog lacks %q", want)
+		}
+	}
+	if strings.Contains(view, "Total ~") {
+		t.Error("fixes don't free space")
+	}
+	m = press(m, r('2'))
+	if len(m.dlg.steps) != 1 || m.dlg.steps[0].Category != actions.Unlinked {
+		t.Errorf("permissions off: steps = %+v", m.dlg.steps)
+	}
+	m = press(m, r('3')) // there's no third fix
+	if len(m.dlg.steps) != 1 {
+		t.Error("a key past the list toggled something")
+	}
+	m = press(m, r('y'))
+	if m.mode != modeRunning || m.run == nil || m.run.title != "Fixing" {
+		t.Errorf("after y: mode %v run %+v", m.mode, m.run)
 	}
 }

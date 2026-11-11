@@ -202,8 +202,8 @@ func TestRunKegsWithoutFormula(t *testing.T) {
 	if gone.Origin != "from untapped someone/tools" || gone.SizeBytes < 4000 || gone.Orphan {
 		t.Errorf("gone origin %q size %d orphan %v", gone.Origin, gone.SizeBytes, gone.Orphan)
 	}
-	if gone.Rack != filepath.Join(f.Prefix, "Cellar", "gone") || !gone.InstalledAt.Equal(time.Unix(f.Days(300).Unix(), 0)) {
-		t.Errorf("gone rack %q installed %v", gone.Rack, gone.InstalledAt)
+	if gone.Root != filepath.Join(f.Prefix, "Cellar", "gone") || !gone.InstalledAt.Equal(time.Unix(f.Days(300).Unix(), 0)) {
+		t.Errorf("gone rack %q installed %v", gone.Root, gone.InstalledAt)
 	}
 	lib := pkgs["libgone"]
 	if lib.Origin != "deleted from homebrew/core" || len(lib.Dependents) != 1 || lib.Dependents[0] != "gone" || lib.Orphan {
@@ -232,5 +232,42 @@ func TestRunNoFormulaOriginForAnInstalledTap(t *testing.T) {
 		if p.Name == "removed" && p.Origin != "deleted from someone/tools" {
 			t.Errorf("origin = %q", p.Origin)
 		}
+	}
+}
+
+func TestRunUnlinkedAndPermissions(t *testing.T) {
+	f := brewtest.Standard(t)
+	f.Info.Formulae[3].LinkedKeg = "" // leftover: should be linked, isn't
+	f.Info.Formulae[1].LinkedKeg = "" // oniguruma: keg-only, so that's expected
+	f.Info.Formulae[1].KegOnly = true
+	f.OrphanKeg(t, "gone", "1.0", "", 100, true)
+	// A read-only directory inside jq's keg, like Go's module cache.
+	locked := filepath.Join(f.Prefix, "Cellar/jq/1.8/bin")
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	pkgs := map[string]*analyze.Package{}
+	for _, p := range analyze.Run(&f.Info, analyze.Options{Prefix: f.Prefix, Now: f.Now}) {
+		pkgs[p.Name] = p
+	}
+
+	if !pkgs["leftover"].Unlinked || !pkgs["leftover"].NeedsFix() {
+		t.Error("leftover should be unlinked")
+	}
+	for _, name := range []string{"oniguruma", "jq", "gone", "viewer"} {
+		if pkgs[name].Unlinked {
+			t.Errorf("%s shouldn't count as unlinked", name)
+		}
+	}
+	jq := pkgs["jq"]
+	if jq.LockedPaths != 1 || !jq.BadPermissions() || !jq.NeedsFix() || jq.Root != filepath.Join(f.Prefix, "Cellar/jq") {
+		t.Errorf("jq locked=%d root=%q", jq.LockedPaths, jq.Root)
+	}
+	if v := pkgs["viewer"]; v.Root != filepath.Join(f.Prefix, "Caskroom/viewer") || v.BadPermissions() {
+		t.Errorf("viewer root=%q bad=%v", v.Root, v.BadPermissions())
+	}
+	if pkgs["harfbuzz"].NeedsFix() {
+		t.Error("harfbuzz needs no fix")
 	}
 }

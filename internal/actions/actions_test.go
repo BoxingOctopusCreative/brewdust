@@ -168,10 +168,10 @@ func TestNeedsTerminal(t *testing.T) {
 
 func TestPlanCleanupKegsWithoutFormula(t *testing.T) {
 	pkgs := []*analyze.Package{
-		{Name: "gone", Kind: analyze.KindFormula, NoFormula: true, Version: "2.0", SizeBytes: 500, Rack: "/opt/homebrew/Cellar/gone"},
+		{Name: "gone", Kind: analyze.KindFormula, NoFormula: true, Version: "2.0", SizeBytes: 500, Root: "/opt/homebrew/Cellar/gone"},
 		{Name: "libgone", Kind: analyze.KindFormula, NoFormula: true, Version: "1.0", SizeBytes: 90,
-			Rack: "/opt/homebrew/Cellar/libgone", AllDependents: []string{"gone", "wget"}},
-		{Name: "wpscan", Kind: analyze.KindFormula, NoFormula: true, Rack: "/opt/homebrew/Cellar/wpscan"},
+			Root: "/opt/homebrew/Cellar/libgone", AllDependents: []string{"gone", "wget"}},
+		{Name: "wpscan", Kind: analyze.KindFormula, NoFormula: true, Root: "/opt/homebrew/Cellar/wpscan"},
 		{Name: "jq", Kind: analyze.KindFormula, SizeBytes: 40},
 	}
 	steps := PlanCleanup(pkgs, []Category{NoFormula})

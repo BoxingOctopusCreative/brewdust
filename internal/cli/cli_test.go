@@ -394,7 +394,7 @@ func TestListDeprecatedAndNoFormula(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range got.Packages {
-		if p["no_formula"] != true || p["rack"] == nil {
+		if p["no_formula"] != true || p["root"] == nil {
 			t.Errorf("json package = %v", p)
 		}
 	}
@@ -424,5 +424,60 @@ func TestCleanKegsWithoutFormula(t *testing.T) {
 	}
 	if _, err := os.Stat(empty); !os.IsNotExist(err) {
 		t.Errorf("%s still exists", empty)
+	}
+}
+
+func TestFix(t *testing.T) {
+	fake := brewtest.Standard(t)
+	fake.Info.Formulae[3].LinkedKeg = "" // leftover
+	locked := filepath.Join(fake.Prefix, "Cellar/jq/1.8/bin")
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	fake.Install(t)
+
+	out, _, err := brewdust(t, fake, "list", "--unlinked")
+	if err != nil || !strings.Contains(out, "leftover") || !strings.Contains(out, "not linked (brewdust fix)") ||
+		!strings.Contains(out, "1 of 6 packages shown") {
+		t.Errorf("--unlinked (%v):\n%s", err, out)
+	}
+	out, _, _ = brewdust(t, fake, "list", "--bad-permissions")
+	if !strings.Contains(out, "jq") || !strings.Contains(out, "permissions: 1 missing owner permissions") {
+		t.Errorf("--bad-permissions:\n%s", out)
+	}
+
+	out, _, err = brewdust(t, fake, "fix", "-n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"$ brew link --formula leftover", "under " + filepath.Join(fake.Prefix, "Cellar/jq"), "Dry run"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Total") || strings.Contains(out, "frees") {
+		t.Errorf("fixes don't free space:\n%s", out)
+	}
+	if got := mutating(t, fake); len(got) != 0 {
+		t.Errorf("dry run ran brew: %q", got)
+	}
+
+	if _, _, err := brewdust(t, fake, "fix", "-y"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mutating(t, fake); !slices.Equal(got, []string{"link --formula leftover"}) {
+		t.Errorf("brew calls = %q", got)
+	}
+	if fi, _ := os.Stat(locked); fi.Mode().Perm() != 0o755 {
+		t.Errorf("%s mode = %v", locked, fi.Mode().Perm())
+	}
+
+	if _, _, err := brewdust(t, fake, "fix", "--only", "old"); err == nil {
+		t.Error("expected an error for a cleanup category")
+	}
+	out, _, _ = brewdust(t, fake, "fix", "-n", "--only", "unlinked")
+	if strings.Contains(out, "chmod") {
+		t.Errorf("--only unlinked:\n%s", out)
 	}
 }

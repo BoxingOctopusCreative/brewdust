@@ -100,7 +100,31 @@ func Notes(p *analyze.Package, direct bool) string {
 	if s := Status(p); s != "" {
 		n = append(n, s)
 	}
+	if p.Unlinked {
+		n = append(n, "not linked (brewdust fix)")
+	}
+	if s := Permissions(p); s != "" {
+		n = append(n, s+" (brewdust fix)")
+	}
 	return strings.Join(n, "; ")
+}
+
+// Permissions describes a package's permission problems, or "".
+func Permissions(p *analyze.Package) string {
+	var parts []string
+	if p.ForeignOwned > 0 {
+		parts = append(parts, fmt.Sprintf("%d owned by another user", p.ForeignOwned))
+	}
+	if p.LockedPaths > 0 {
+		parts = append(parts, fmt.Sprintf("%d missing owner permissions", p.LockedPaths))
+	}
+	if p.DeniedPaths > 0 {
+		parts = append(parts, fmt.Sprintf("%d unreadable", p.DeniedPaths))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "permissions: " + strings.Join(parts, ", ")
 }
 
 // Status describes a package brew has deprecated or disabled, or a keg
@@ -200,6 +224,24 @@ func Summary(w io.Writer, shown, all []*analyze.Package) {
 	if noFormula > 0 {
 		fmt.Fprintf(w, "Kegs with no formula: %d using %s (brew can't upgrade these; see `brewdust list --no-formula`).\n",
 			noFormula, Bytes(noFormulaBytes))
+	}
+	var unlinked, badPerms int
+	for _, p := range all {
+		if p.Unlinked {
+			unlinked++
+		}
+		if p.BadPermissions() {
+			badPerms++
+		}
+	}
+	if unlinked > 0 {
+		fmt.Fprintf(w, "Unlinked kegs: %d (their commands aren't on PATH).\n", unlinked)
+	}
+	if badPerms > 0 {
+		fmt.Fprintf(w, "Packages with broken permissions: %d (brew may fail to upgrade or remove them).\n", badPerms)
+	}
+	if unlinked+badPerms > 0 {
+		defer fmt.Fprintln(w, "Run `brewdust fix` to repair these.")
 	}
 	if deprecated+disabled > 0 {
 		fmt.Fprintf(w, "Deprecated by brew: %d; disabled: %d (see `brewdust list --deprecated`).\n", deprecated, disabled)

@@ -63,7 +63,7 @@ func loaded(t *testing.T, n int) Model {
 	}
 	m := newModel(&env{ctx: context.Background()}, Options{})
 	m.width, m.height = 140, 30
-	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/opt/homebrew", Now: now, Packages: pkgs}})
+	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/nonexistent/homebrew", Now: now, Packages: pkgs}})
 	return m
 }
 
@@ -233,5 +233,17 @@ func TestClickDiskRows(t *testing.T) {
 	// Row 6, "Deprecated", switches to the deprecated view.
 	if m = click(m, x, g.diskTop+1+6); m.presetName() != "deprecated" || m.mode != modeList {
 		t.Errorf("deprecated row: view %q mode %v", m.presetName(), m.mode)
+	}
+}
+
+func TestClickNeedsFixRow(t *testing.T) {
+	m := loaded(t, 5)
+	m.width, m.height = 140, 40
+	g := m.geom()
+	if m = click(m, g.listW+3, g.diskTop+1+8); m.dlg == nil || m.dlg.kind != dialogFix {
+		t.Fatalf("needs-fix row: dlg = %+v", m.dlg)
+	}
+	if _, ok := keyFor("1-2"); ok {
+		t.Error("a key range isn't a key")
 	}
 }

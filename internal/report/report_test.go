@@ -259,3 +259,26 @@ func TestSummaryStatus(t *testing.T) {
 		t.Errorf("deprecation alone has nothing to clean:\n%s", buf.String())
 	}
 }
+
+func TestFixNotesAndSummary(t *testing.T) {
+	p := analyze.Package{Kind: analyze.KindFormula, OnRequest: true, Unlinked: true, ForeignOwned: 2, LockedPaths: 30, DeniedPaths: 1}
+	want := "requested; not linked (brewdust fix); permissions: 2 owned by another user, 30 missing owner permissions, 1 unreadable (brewdust fix)"
+	if got := Notes(&p, false); got != want {
+		t.Errorf("Notes = %q\nwant %q", got, want)
+	}
+	if Permissions(&analyze.Package{}) != "" {
+		t.Error("no problems should say nothing")
+	}
+
+	var buf bytes.Buffer
+	pkgs := []*analyze.Package{&p, {Name: "x", Unlinked: true}}
+	Summary(&buf, pkgs, pkgs)
+	for _, want := range []string{"Unlinked kegs: 2", "Packages with broken permissions: 1", "Run `brewdust fix`"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("summary lacks %q:\n%s", want, buf.String())
+		}
+	}
+	if strings.Contains(buf.String(), "brewdust clean") {
+		t.Errorf("nothing to clean:\n%s", buf.String())
+	}
+}
