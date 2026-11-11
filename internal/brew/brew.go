@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,9 +22,74 @@ type Info struct {
 	Casks    []Cask    `json:"casks"`
 }
 
+// Lifecycle is a formula's or cask's deprecation and disabling. brew
+// deprecates a package to warn that it's going away, and disables it once
+// it can no longer be installed or upgraded; installed copies keep working.
+type Lifecycle struct {
+	Deprecated                    bool   `json:"deprecated"`
+	DeprecationDate               string `json:"deprecation_date"`
+	DeprecationReason             string `json:"deprecation_reason"`
+	DeprecationReplacementFormula string `json:"deprecation_replacement_formula"`
+	DeprecationReplacementCask    string `json:"deprecation_replacement_cask"`
+	Disabled                      bool   `json:"disabled"`
+	DisableDate                   string `json:"disable_date"`
+	DisableReason                 string `json:"disable_reason"`
+	DisableReplacementFormula     string `json:"disable_replacement_formula"`
+	DisableReplacementCask        string `json:"disable_replacement_cask"`
+}
+
+// Reason explains why the package is disabled or deprecated, in words.
+func (l Lifecycle) Reason() string {
+	if l.Disabled && l.DisableReason != "" {
+		return ReasonText(l.DisableReason)
+	}
+	return ReasonText(l.DeprecationReason)
+}
+
+// Replacement names what brew suggests installing instead, if anything.
+func (l Lifecycle) Replacement() string {
+	for _, r := range []string{l.DisableReplacementFormula, l.DisableReplacementCask,
+		l.DeprecationReplacementFormula, l.DeprecationReplacementCask} {
+		if r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
+// reasons are the wording `brew info` uses for its reason codes, which it
+// prints after the package's name ("openssl@1.1 is not supported upstream").
+var reasons = map[string]string{
+	"does_not_build":           "does not build",
+	"no_license":               "has no license",
+	"repo_archived":            "has an archived upstream repository",
+	"repo_removed":             "has a removed upstream repository",
+	"unmaintained":             "is not maintained upstream",
+	"unsupported":              "is not supported upstream",
+	"deprecated_upstream":      "is deprecated upstream",
+	"versioned_formula":        "is a versioned formula",
+	"checksum_mismatch":        "had its source change checksum after release",
+	"discontinued":             "is discontinued upstream",
+	"no_longer_available":      "is no longer available upstream",
+	"no_longer_meets_criteria": "no longer meets the criteria for acceptable casks",
+	"unsigned":                 "is unsigned or does not meet signature requirements",
+	"fails_gatekeeper_check":   "does not pass the macOS Gatekeeper check",
+}
+
+// ReasonText turns a brew reason code into words. Packages may give their
+// own free-text reason instead, which passes through unchanged.
+func ReasonText(code string) string {
+	if r, ok := reasons[code]; ok {
+		return r
+	}
+	return strings.ReplaceAll(code, "_", " ")
+}
+
 type Formula struct {
+	Lifecycle
 	Name      string             `json:"name"`
 	FullName  string             `json:"full_name"`
+	Oldnames  []string           `json:"oldnames"`
 	Desc      string             `json:"desc"`
 	KegOnly   bool               `json:"keg_only"`
 	LinkedKeg string             `json:"linked_keg"`
@@ -87,9 +153,33 @@ func (f Formula) Current() (InstalledVersion, bool) {
 	return best, true
 }
 
+// Receipt is the INSTALL_RECEIPT.json brew writes into each keg. It's how
+// brewdust learns about kegs whose formula brew can no longer find.
+type Receipt struct {
+	Time                int64 `json:"time"`
+	InstalledOnRequest  bool  `json:"installed_on_request"`
+	RuntimeDependencies []Dep `json:"runtime_dependencies"`
+	Source              struct {
+		Tap string `json:"tap"`
+	} `json:"source"`
+}
+
+// ReadReceipt reads the receipt in a keg (a Cellar/<name>/<version> directory).
+func ReadReceipt(keg string) (Receipt, error) {
+	var r Receipt
+	data, err := os.ReadFile(filepath.Join(keg, "INSTALL_RECEIPT.json"))
+	if err != nil {
+		return r, err
+	}
+	err = json.Unmarshal(data, &r)
+	return r, err
+}
+
 type Cask struct {
+	Lifecycle
 	Token         string     `json:"token"`
 	FullToken     string     `json:"full_token"`
+	OldTokens     []string   `json:"old_tokens"`
 	Name          []string   `json:"name"`
 	Desc          string     `json:"desc"`
 	Installed     string     `json:"installed"`

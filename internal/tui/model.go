@@ -33,13 +33,18 @@ type dialogKind int
 const (
 	dialogRemove dialogKind = iota
 	dialogClean
+	dialogFix
 )
+
+// hasCategories reports a dialog of toggleable categories: clean or fix.
+func (d *dialog) hasCategories() bool { return d.kind == dialogClean || d.kind == dialogFix }
 
 type dialog struct {
 	kind    dialogKind
 	targets []*analyze.Package // remove: what the user picked
 	zap     bool
-	cats    map[actions.Category]bool // clean: enabled categories
+	cats    map[actions.Category]bool // clean, fix: enabled categories
+	catList []actions.Category        // clean, fix: the categories offered, in order
 	steps   []actions.Step
 	blocked map[string][]string
 }
@@ -58,6 +63,9 @@ var presets = []preset{
 	{"idle ≥ 1y", func(f *app.Filter) { f.StaleDays = 365 }},
 	{"orphans", func(f *app.Filter) { f.Orphans = true }},
 	{"broken casks", func(f *app.Filter) { f.Broken = true }},
+	{"deprecated", func(f *app.Filter) { f.Retiring = true }},
+	{"no formula", func(f *app.Filter) { f.NoFormula = true }},
+	{"needs fix", func(f *app.Filter) { f.NeedsFix = true }},
 }
 
 var kinds = []string{"all", analyze.KindFormula, analyze.KindCask}
@@ -99,7 +107,7 @@ func newModel(e *env, opt Options) Model {
 		sortBy = "size"
 	}
 	p := 0
-	if f.Requested || f.Orphans || f.Broken || f.Needed || f.StaleDays > 0 {
+	if f.Requested || f.Orphans || f.Broken || f.Retiring || f.NoFormula || f.Unlinked || f.BadPerms || f.NeedsFix || f.Needed || f.StaleDays > 0 {
 		p = -1
 	}
 	return Model{env: e, mode: modeLoading, filter: f, preset: p, sortBy: sortBy, marked: map[string]bool{}, lastClick: -1}
@@ -287,6 +295,8 @@ func (m Model) keyList(k tea.KeyMsg) (Model, tea.Cmd) {
 			return m.openRemove()
 		case 'c':
 			return m.openClean()
+		case 'f':
+			return m.openFix()
 		case 'r':
 			m.mode = modeLoading
 			return m, tea.Batch(m.loadCmd(), spin())
@@ -336,16 +346,19 @@ func (m Model) keyDialog(k tea.KeyMsg) (Model, tea.Cmd) {
 		// Marks stay put: the rescan afterwards drops those that were removed,
 		// so anything that failed is still marked for another try.
 		title := "Removing packages"
-		if d.kind == dialogClean {
+		switch d.kind {
+		case dialogClean:
 			title = "Cleaning up"
+		case dialogFix:
+			title = "Fixing"
 		}
 		m.dlg, m.mode = nil, modeList
 		return m.startRun(title, d.steps)
 	case k.Type == tea.KeyRune && d.kind == dialogRemove && k.Rune == 'z':
 		d.zap = !d.zap
 		m.planRemove()
-	case k.Type == tea.KeyRune && d.kind == dialogClean && k.Rune >= '1' && int(k.Rune-'1') < len(actions.Categories):
-		c := actions.Categories[k.Rune-'1']
+	case k.Type == tea.KeyRune && d.hasCategories() && k.Rune >= '1' && int(k.Rune-'1') < len(d.catList):
+		c := d.catList[k.Rune-'1']
 		d.cats[c] = !d.cats[c]
 		m.planClean()
 	}
@@ -379,14 +392,23 @@ func (m *Model) planRemove() {
 }
 
 func (m *Model) openClean() (Model, tea.Cmd) {
+	return m.openCategories(dialogClean, actions.Categories)
+}
+
+func (m *Model) openFix() (Model, tea.Cmd) {
+	return m.openCategories(dialogFix, actions.FixCategories)
+}
+
+// openCategories opens a dialog of toggleable categories, all on.
+func (m *Model) openCategories(kind dialogKind, list []actions.Category) (Model, tea.Cmd) {
 	if m.snap == nil {
 		return *m, nil
 	}
 	cats := map[actions.Category]bool{}
-	for _, c := range actions.Categories {
+	for _, c := range list {
 		cats[c] = true
 	}
-	m.dlg = &dialog{kind: dialogClean, cats: cats}
+	m.dlg = &dialog{kind: kind, cats: cats, catList: list}
 	m.planClean()
 	m.mode = modeDialog
 	return *m, nil
@@ -394,7 +416,7 @@ func (m *Model) openClean() (Model, tea.Cmd) {
 
 func (m *Model) planClean() {
 	var cats []actions.Category
-	for _, c := range actions.Categories {
+	for _, c := range m.dlg.catList {
 		if m.dlg.cats[c] {
 			cats = append(cats, c)
 		}
@@ -524,4 +546,14 @@ func next(list []string, cur string) string {
 		}
 	}
 	return list[0]
+}
+
+// presetIndex returns the index of the named view tab.
+func presetIndex(name string) int {
+	for i, p := range presets {
+		if p.name == name {
+			return i
+		}
+	}
+	return 0
 }

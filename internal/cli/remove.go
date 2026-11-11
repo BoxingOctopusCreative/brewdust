@@ -101,14 +101,22 @@ func printBlocked(w io.Writer, blocked map[string][]string) {
 
 // printPlan lists the steps and what they will free.
 func printPlan(w io.Writer, steps []actions.Step) {
+	frees := false
 	for _, s := range steps {
-		fmt.Fprintf(w, "%s — frees ~%s\n", s.Title, report.Bytes(s.Bytes))
+		if s.Category.IsFix() {
+			fmt.Fprintln(w, s.Title)
+		} else {
+			frees = true
+			fmt.Fprintf(w, "%s — frees ~%s\n", s.Title, report.Bytes(s.Bytes))
+		}
 		for _, it := range s.Items {
 			fmt.Fprintf(w, "    %s\n", it)
 		}
 		fmt.Fprintf(w, "  $ %s\n\n", s.Command())
 	}
-	fmt.Fprintf(w, "Total: ~%s\n", report.Bytes(actions.TotalBytes(steps)))
+	if frees {
+		fmt.Fprintf(w, "Total: ~%s\n", report.Bytes(actions.TotalBytes(steps)))
+	}
 }
 
 func runSteps(cmd *cobra.Command, prefix string, steps []actions.Step, rf runFlags) error {

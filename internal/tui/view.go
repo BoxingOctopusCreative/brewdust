@@ -181,8 +181,8 @@ func (m Model) statusKeys() (string, style.Style, [][2]string) {
 		if m.dlg.kind == dialogRemove && hasCask(m.dlg.targets) {
 			keys = append(keys, [2]string{"z", "zap"})
 		}
-		if m.dlg.kind == dialogClean {
-			keys = append(keys, [2]string{"1-3", "toggle"})
+		if m.dlg.hasCategories() {
+			keys = append(keys, [2]string{fmt.Sprintf("1-%d", len(m.dlg.catList)), "toggle"})
 		}
 	case m.mode == modeHelp:
 		modeName, modeSt = "HELP", style.New().Background(colBlue).Foreground(colInk).Bold(true)
@@ -547,6 +547,53 @@ func (m Model) detailLines(p *analyze.Package, w int, full bool) []string {
 		add("Missing", paint(stWarn, truncate(a, vw)))
 		add("", paint(stDim, "deleted outside brew · c to clean up"))
 	}
+	if p.NoFormula {
+		if p.EmptyKeg() {
+			add("Formula", paint(stWarn, "none · empty Cellar directory"))
+		} else {
+			add("Formula", paint(stWarn, truncate("not found · "+p.Origin, vw)))
+		}
+		hint := "brew can't upgrade it · c to clean up"
+		if len(p.AllDependents) > 0 {
+			hint = "brew can't upgrade it · still needed, so c leaves it"
+		}
+		add("", paint(stDim, truncate(hint, vw)))
+	}
+	if p.Unlinked {
+		add("Linked", paint(stWarn, "no · f to link"))
+		add("", paint(stDim, truncate("not keg-only, but its commands aren't on PATH", vw)))
+	}
+	if p.BadPermissions() {
+		for i, l := range wrap(strings.TrimPrefix(report.Permissions(p), "permissions: "), vw) {
+			if i == 0 {
+				add("Perms", paint(stWarn, l))
+			} else {
+				add("", paint(stWarn, l))
+			}
+		}
+		add("", paint(stDim, truncate("brew may fail to upgrade or remove it · f to fix", vw)))
+	}
+	if p.Retiring() {
+		state, since := "deprecated", p.DeprecationDate
+		if p.Disabled {
+			state, since = "disabled", p.DisableDate
+		}
+		if since != "" {
+			state += " since " + since
+		}
+		add("Status", paint(stWarn, state))
+		if p.StatusReason != "" {
+			for _, l := range wrap(p.Name+" "+p.StatusReason, vw) {
+				add("", paint(stDim, l))
+			}
+		}
+		if !p.Disabled && p.DisableDate != "" {
+			add("", paint(stDim, "to be disabled "+p.DisableDate))
+		}
+		if p.Replacement != "" {
+			add("", paint(stDim, truncate("brew suggests "+p.Replacement+" instead", vw)))
+		}
+	}
 	if p.ScanErrors > 0 {
 		add("Unreadable", fmt.Sprintf("%d entries; size may be low", p.ScanErrors))
 	}
@@ -559,8 +606,8 @@ func (m Model) diskPane(w, h int) []string {
 	if m.snap == nil {
 		return pane(w, h, spec)
 	}
-	var total, formulae, casks, old, orphans, stale int64
-	broken := 0
+	var total, formulae, casks, old, orphans, stale, retiring int64
+	broken, noFormula, needsFix := 0, 0, 0
 	for _, p := range m.snap.Packages {
 		total += p.SizeBytes
 		old += p.ReclaimableBytes
@@ -574,6 +621,15 @@ func (m Model) diskPane(w, h int) []string {
 		}
 		if p.Broken() {
 			broken++
+		}
+		if p.Retiring() {
+			retiring += p.SizeBytes
+		}
+		if p.NoFormula {
+			noFormula++
+		}
+		if p.NeedsFix() {
+			needsFix++
 		}
 		if m.filter.Idle(p) >= 365 {
 			stale += p.SizeBytes
@@ -590,7 +646,15 @@ func (m Model) diskPane(w, h int) []string {
 	}
 	brokenText := "none"
 	if broken > 0 {
-		brokenText = fmt.Sprintf("%d casks", broken)
+		brokenText = plural(broken, "cask")
+	}
+	fixText := "none"
+	if needsFix > 0 {
+		fixText = plural(needsFix, "package")
+	}
+	noFormulaText := "none"
+	if noFormula > 0 {
+		noFormulaText = plural(noFormula, "keg")
 	}
 	spec.body = []string{
 		row("Formulae", formulae, stGaugeBlue, ""),
@@ -599,11 +663,21 @@ func (m Model) diskPane(w, h int) []string {
 		row("Old vers.", old, stGaugeYellow, ""),
 		row("Orphans", orphans, stGaugeYellow, ""),
 		paint(stDim, fit("Broken", 10)) + " " + fitRight(brokenText, inner-11),
+		row("Deprecated", retiring, stGaugeYellow, ""),
+		paint(stDim, fit("No formula", 10)) + " " + fitRight(noFormulaText, inner-11),
+		paint(stDim, fit("Needs fix", 10)) + " " + fitRight(fixText, inner-11),
 		row("Marked", m.markedBytes(), stGaugeAccent, ""),
 	}
 	spec.right = report.Bytes(total)
-	if old+orphans > 0 || broken > 0 {
-		spec.footer = paint(stDim, "c to clean up")
+	var hints []string
+	if old+orphans > 0 || broken > 0 || noFormula > 0 {
+		hints = append(hints, "c to clean up")
+	}
+	if needsFix > 0 {
+		hints = append(hints, "f to fix")
+	}
+	if len(hints) > 0 {
+		spec.footer = paint(stDim, strings.Join(hints, " · "))
 	}
 	return pane(w, h, spec)
 }
@@ -612,8 +686,11 @@ func (m Model) diskPane(w, h int) []string {
 func (m Model) floating() (string, []string, bool) {
 	switch {
 	case m.mode == modeDialog && m.dlg != nil:
-		if m.dlg.kind == dialogRemove {
+		switch m.dlg.kind {
+		case dialogRemove:
 			return "Remove packages", m.dialogLines(), true
+		case dialogFix:
+			return "Fix", m.dialogLines(), true
 		}
 		return "Clean up", m.dialogLines(), true
 	case m.mode == modeHelp:
@@ -646,20 +723,25 @@ func (m Model) dialogLines() []string {
 		}
 	}
 
-	if d.kind == dialogClean {
+	if d.hasCategories() {
 		size := map[actions.Category]int64{}
 		found := map[actions.Category]bool{}
+		count := map[actions.Category]int{}
 		for _, s := range d.steps {
 			size[s.Category] += s.Bytes
 			found[s.Category] = true
+			count[s.Category] = max(count[s.Category], len(s.Items))
 		}
-		for i, c := range actions.Categories {
+		for i, c := range d.catList {
 			box := paint(stDim, "[ ]")
 			extra := ""
 			if d.cats[c] {
 				box = paint(stMark, "[x]")
 				extra = "nothing to do"
-				if found[c] {
+				switch {
+				case found[c] && c.IsFix():
+					extra = plural(count[c], "package")
+				case found[c]:
 					extra = "~" + report.Bytes(size[c])
 				}
 			}
@@ -680,7 +762,11 @@ func (m Model) dialogLines() []string {
 		perStep = max(1, (avail-fixed)/len(d.steps)-1)
 	}
 	for _, s := range d.steps {
-		lines = append(lines, paint(stBold, s.Title)+paint(stDim, "  ~"+report.Bytes(s.Bytes)))
+		size := "  ~" + report.Bytes(s.Bytes)
+		if s.Category.IsFix() {
+			size = ""
+		}
+		lines = append(lines, paint(stBold, s.Title)+paint(stDim, size))
 		listItems(s.Items, perStep)
 		lines = append(lines, paint(stDim, "  $ "+truncate(s.Command(), maxCmd)))
 	}
@@ -702,6 +788,14 @@ func (m Model) dialogLines() []string {
 		return lines
 	}
 	total := paint(stBold, "Total ~"+report.Bytes(actions.TotalBytes(d.steps)))
+	if d.kind == dialogFix {
+		total = paint(stDim, "Changes only Cellar/<formula> and Caskroom/<cask> directories.")
+		for _, s := range d.steps {
+			if len(s.Chown) > 0 {
+				total = paint(stDim, "sudo needs your password: t runs that step in the terminal if asked.")
+			}
+		}
+	}
 	if d.kind == dialogRemove && hasCask(d.targets) {
 		z := "zap off"
 		if d.zap {
@@ -736,7 +830,8 @@ func helpLines() []string {
 		{"s", "cycle sort: size, idle, name, deps"},
 		{"D", "toggle whether dependents count as use"},
 		{"d / x / delete", "remove marked packages (or the selected one)"},
-		{"c", "clean up old versions, orphans and broken casks"},
+		{"c", "clean up old versions, orphans, broken casks and kegs with no formula"},
+		{"f", "fix unlinked kegs and broken permissions"},
 		{"r", "rescan"},
 		{"esc", "clear marks, then search"},
 		{"q / ctrl+c", "quit"},
@@ -749,7 +844,7 @@ func helpLines() []string {
 		{"wheel", "scroll the list"},
 		{"click tab / header", "switch view / sort by that column"},
 		{"click NEEDED BY", "sort by most depended-on"},
-		{"click Disk row", "clean up that category"},
+		{"click Disk row", "clean up or fix that category"},
 		{"click a key hint", "same as pressing it"},
 	}
 	var lines []string
@@ -773,4 +868,12 @@ func neededLabel(p *analyze.Package, w int) string {
 	}
 	more := fmt.Sprintf(" +%d", len(p.Dependents)-1)
 	return fit(strings.TrimRight(fit(p.Dependents[0], w-len(more)), " ")+more, w)
+}
+
+// plural formats a count of things: "1 keg", "2 kegs".
+func plural(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
 }

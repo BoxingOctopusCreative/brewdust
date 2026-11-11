@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/phoenix-tui/phoenix/tea"
+
+	"github.com/BoxingOctopusCreative/brewdust/internal/actions"
 	"github.com/BoxingOctopusCreative/brewdust/internal/analyze"
 	"github.com/BoxingOctopusCreative/brewdust/internal/app"
 )
@@ -60,7 +63,7 @@ func loaded(t *testing.T, n int) Model {
 	}
 	m := newModel(&env{ctx: context.Background()}, Options{})
 	m.width, m.height = 140, 30
-	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/opt/homebrew", Now: now, Packages: pkgs}})
+	m, _ = m.Update(loadedMsg{snap: &app.Snapshot{Prefix: "/nonexistent/homebrew", Now: now, Packages: pkgs}})
 	return m
 }
 
@@ -211,5 +214,36 @@ func TestClickDialog(t *testing.T) {
 	m = click(m, 0, 1) // outside the floating pane
 	if m.mode != modeList {
 		t.Error("click outside should cancel")
+	}
+}
+
+func TestClickDiskRows(t *testing.T) {
+	m := loaded(t, 5)
+	m.width, m.height = 140, 40
+	g := m.geom()
+	if g.diskTop < 0 {
+		t.Fatal("disk pane hidden")
+	}
+	x := g.listW + 3
+	// Row 7, "No formula", opens the cleanup with only that category.
+	if m = click(m, x, g.diskTop+1+7); m.dlg == nil || !m.dlg.cats[actions.NoFormula] || m.dlg.cats[actions.OldVersions] || m.dlg.cats[actions.Broken] {
+		t.Fatalf("no-formula row: dlg = %+v", m.dlg)
+	}
+	m, _ = m.keyDialog(tea.KeyMsg{Type: tea.KeyEsc})
+	// Row 6, "Deprecated", switches to the deprecated view.
+	if m = click(m, x, g.diskTop+1+6); m.presetName() != "deprecated" || m.mode != modeList {
+		t.Errorf("deprecated row: view %q mode %v", m.presetName(), m.mode)
+	}
+}
+
+func TestClickNeedsFixRow(t *testing.T) {
+	m := loaded(t, 5)
+	m.width, m.height = 140, 40
+	g := m.geom()
+	if m = click(m, g.listW+3, g.diskTop+1+8); m.dlg == nil || m.dlg.kind != dialogFix {
+		t.Fatalf("needs-fix row: dlg = %+v", m.dlg)
+	}
+	if _, ok := keyFor("1-2"); ok {
+		t.Error("a key range isn't a key")
 	}
 }

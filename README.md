@@ -84,11 +84,14 @@ key hints at the bottom.
 - **Packages** lists everything in the current view with a log-scale size bar,
   colour-coded idle time, and the scroll position in its frame.
 - **Details** follows the selection: size and idle gauges, the evidence for
-  "last used", what depends on it, old versions, and missing apps. Press
+  "last used", what depends on it, old versions, missing apps, whether brew
+  has deprecated or disabled it and why, and whether it's unlinked or has
+  broken permissions. Press
   `enter` to zoom it to full screen.
 - **Disk** breaks down where the space goes: formulae vs. casks, packages idle
-  for a year or more, reclaimable old versions, orphans, broken casks, and what
-  you've marked.
+  for a year or more, reclaimable old versions, orphans, broken casks,
+  deprecated packages, kegs with no formula, packages that need fixing, and
+  what you've marked.
 - Removal, cleanup and help open as floating panes over the dimmed list.
 
 The side column hides on terminals narrower than 100 columns, and the Disk
@@ -100,11 +103,12 @@ pane on ones shorter than 24 rows.
 | `space` / `a` | Mark the package / mark everything shown |
 | `enter` | Zoom the details pane |
 | `/` | Search names and descriptions |
-| `v` | Next view tab: all, requested, dependencies, idle ≥ 90d, idle ≥ 1y, orphans, broken casks |
+| `v` | Next view tab: all, requested, dependencies, idle ≥ 90d, idle ≥ 1y, orphans, broken casks, deprecated, no formula, needs fix |
 | `t` / `s` | Cycle type (all, formula, cask) / sort (size, idle, name, deps) |
 | `D` | Toggle whether use by dependents counts |
 | `d`, `x`, `delete` | Remove the marked packages, or the selected one |
-| `c` | Clean up old versions, orphans and broken casks |
+| `c` | Clean up old versions, orphans, broken casks and kegs with no formula |
+| `f` | Fix unlinked kegs and broken permissions |
 | `r` / `?` / `q` | Rescan / help / quit |
 
 Removing or cleaning up always shows a confirmation listing exactly what will
@@ -134,7 +138,7 @@ The mouse works too:
 | Drag the scrollbar thumb | Scroll; click the track to jump there |
 | Wheel | Scroll the list |
 | Click a tab / column header | Switch view / sort by that column |
-| Click a row in the Disk pane | Open cleanup for just that category |
+| Click a row in the Disk pane | Open cleanup or fixes for just that category (Deprecated switches to that view) |
 | Click a key hint in the status bar | Same as pressing the key |
 | Click outside a floating pane | Close it |
 
@@ -155,6 +159,10 @@ brewdust remove --cask calibre --zap          # also delete the app's settings a
 brewdust remove -n gcc                        # dry run
 
 brewdust clean --dry-run                      # show the cleanup plan
+brewdust list --deprecated                    # formulae and casks brew is retiring
+brewdust list --no-formula                    # kegs whose formula is gone
+brewdust fix --dry-run                        # what fix would link and repair
+
 brewdust clean --only orphans,broken -y       # no prompt
 ```
 
@@ -169,12 +177,34 @@ When output isn't a terminal, plain `brewdust` behaves like `brewdust list`.
 | `old` | Stale Caskroom version directories, including interrupted `*.upgrading` ones | deleted directly, since `brew cleanup` skips them. brewdust only deletes `Caskroom/<cask>/<version>` paths |
 | `orphans` | Dependencies nothing installed needs | `brew autoremove` |
 | `broken` | Casks whose app was deleted outside brew | `brew uninstall --cask` |
+| `noformula` | Kegs whose formula brew can't find anymore, unless something installed needs them | `brew uninstall --formula`, which finds the keg without its formula |
+| `noformula` | Empty `Cellar/<name>` directories | removed directly, and only while still empty |
 
 `brew cleanup` leaves a formula's old versions alone while it's pinned, or
 while a newer version than the one installed is available. brewdust lists
 those as "kept by brew cleanup" rather than reclaimable, leaves them out of
 the cleanup plan and totals, and shows the reason in the details pane. Run
 `brew upgrade <formula>` (or unpin it) and they become reclaimable.
+
+### Fixes
+
+`brewdust fix` (`f` in the interface) repairs problems that stop a package
+working or brew managing it. Like cleanup, it shows the plan and asks first.
+
+| Fix | What | How |
+| --- | --- | --- |
+| `unlinked` | Formulae that aren't keg-only but have no version linked into the prefix, so their commands aren't on `PATH` | `brew link --formula`, which refuses, and says why, if another package owns the same paths |
+| `permissions` | Files in a package owned by another user, usually from running brew with `sudo` | `sudo chown -R <you>`, which asks for your password |
+| `permissions` | Directories missing `u+rwx` and files missing `u+r`, which make brew fail with "Permission denied" when it upgrades, cleans up or uninstalls | brewdust adds the missing owner permissions itself; files brew made read-only stay that way |
+
+Only `Cellar/<formula>` and `Caskroom/<cask>` directories are changed. In
+the interface, brew and sudo can't ask for a password, so a step that needs
+one fails with a note, and `t` reruns it in the terminal.
+
+A common cause of the second kind is a `GOPATH` inside a Go keg: Go writes
+its module cache read-only, so it ends up in the keg and blocks `brew
+cleanup`. Fixing the permissions unblocks brew; moving `GOPATH` out of
+Homebrew's prefix stops it recurring.
 
 ### Filter flags
 
@@ -188,6 +218,10 @@ Shared by the interactive view and `list`.
 | `--requested` | Only packages you installed explicitly (casks always count) |
 | `--orphans` | Only dependencies with no installed dependents |
 | `--broken` | Only casks whose app was deleted outside brew |
+| `--deprecated` | Only formulae and casks brew has deprecated or disabled |
+| `--no-formula` | Only kegs whose formula brew can't find anymore |
+| `--unlinked` | Only formulae that aren't keg-only but aren't linked |
+| `--bad-permissions` | Only packages with files brew can't manage |
 | `--deps` | Only packages that other installed packages depend on |
 | `--direct` | Judge idleness by a package's own use, ignoring its dependents |
 | `--min-size 50MB` | Only packages at least this big (decimal units) |
@@ -228,6 +262,23 @@ what the package itself depends on; `--json` includes `dependencies`,
 dependencies transitively, so brewdust works out the direct links from what is
 actually installed. Removal checks the full indirect set: a formula is skipped
 if anything you're keeping needs it, even through another package.
+
+**Deprecated and disabled.** Homebrew deprecates a formula or cask that's on
+its way out (unsupported upstream, an old versioned formula, and so on), and
+later disables it, after which it can't be installed or upgraded. Installed
+copies keep working, but won't get fixes. brewdust shows the status, brew's
+reason, the dates (including a disable date that's still to come) and any
+replacement brew suggests. These aren't removed by `clean`, since they may
+still be in use: find a replacement first, then `brewdust remove` them.
+
+**Kegs with no formula** are Cellar directories that no installed formula
+accounts for, by name or by an old name it was renamed from. They're left over
+when a formula is deleted from its tap or the tap is removed. `brew info
+--installed` leaves them out and brew can't upgrade them, but `brew doctor`
+warns about them. brewdust reads each keg's install receipt for its version,
+install date, dependencies and original tap, and sizes and dates it like any
+other formula. An empty `Cellar/<name>` directory is listed as an "empty Cellar
+directory".
 
 ## Caveats
 

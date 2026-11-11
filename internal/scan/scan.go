@@ -6,6 +6,7 @@
 package scan
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -20,13 +21,25 @@ type Result struct {
 	LastAccess time.Time // newest atime among files accepted by the Eligible func
 	AccessPath string    // the file that produced LastAccess
 	Errors     int       // entries that could not be read
+
+	// Permission problems, which make brew fail to upgrade, clean up or
+	// uninstall a package with "Permission denied".
+	Foreign int // entries owned by another user
+	Locked  int // directories missing u+rwx, or files missing u+r
+	Denied  int // entries the walk was refused (also counted in Errors)
 }
+
+// PermissionProblems counts entries with any of the problems above.
+func (r Result) PermissionProblems() int { return r.Foreign + r.Locked + r.Denied }
 
 // Merge folds o into r.
 func (r *Result) Merge(o Result) {
 	r.Exists = r.Exists || o.Exists
 	r.Bytes += o.Bytes
 	r.Errors += o.Errors
+	r.Foreign += o.Foreign
+	r.Locked += o.Locked
+	r.Denied += o.Denied
 	if o.LastAccess.After(r.LastAccess) {
 		r.LastAccess, r.AccessPath = o.LastAccess, o.AccessPath
 	}
@@ -55,6 +68,9 @@ func Dir(root string, eligible Eligible) Result {
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			r.Errors++
+			if errors.Is(err, fs.ErrPermission) {
+				r.Denied++
+			}
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
@@ -78,6 +94,7 @@ func Dir(root string, eligible Eligible) Result {
 			seen[k] = true
 		}
 		r.Bytes += int64(st.Blocks) * 512
+		r.checkPermissions(d, info, st)
 
 		if eligible != nil && d.Type().IsRegular() {
 			rel, err := filepath.Rel(root, path)
@@ -90,4 +107,21 @@ func Dir(root string, eligible Eligible) Result {
 		return nil
 	})
 	return r
+}
+
+// uid is the user brewdust runs as, who should own everything brew installed.
+var uid = uint32(os.Getuid())
+
+func (r *Result) checkPermissions(d fs.DirEntry, info fs.FileInfo, st *syscall.Stat_t) {
+	if uid != 0 && st.Uid != uid {
+		r.Foreign++
+		return // the owner's permissions aren't ours to judge
+	}
+	mode := info.Mode().Perm()
+	switch {
+	case d.IsDir() && mode&0o700 != 0o700:
+		r.Locked++
+	case d.Type().IsRegular() && mode&0o400 == 0:
+		r.Locked++
+	}
 }

@@ -88,3 +88,60 @@ func TestAppLastUsedUnindexedBundle(t *testing.T) {
 		t.Errorf("a bundle that was never opened reported as used at %v", got)
 	}
 }
+
+// lockedTree builds a tree with permission problems: a directory missing
+// u+w, a file missing u+r, and a directory with no permissions at all. The
+// modes are restored afterwards so the temporary directory can be removed.
+func lockedTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, d := range []string{"ro/sub", "closed/inside"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"ok", "ro/sub/f", "unreadable"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chmod := func(p string, m os.FileMode) {
+		if err := os.Chmod(filepath.Join(root, p), m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chmod("ro", 0o555)
+	chmod("unreadable", 0o200)
+	chmod("closed", 0o000)
+	t.Cleanup(func() {
+		for _, p := range []string{"ro", "unreadable", "closed"} {
+			_ = os.Chmod(filepath.Join(root, p), 0o755)
+		}
+	})
+	return root
+}
+
+func TestDirPermissions(t *testing.T) {
+	root := lockedTree(t)
+	r := Dir(root, nil)
+	// ro, unreadable and closed lack owner permissions; closed can't be read.
+	if r.Locked != 3 || r.Denied != 1 || r.Foreign != 0 || r.PermissionProblems() != 4 {
+		t.Errorf("locked=%d denied=%d foreign=%d", r.Locked, r.Denied, r.Foreign)
+	}
+
+	var sum Result
+	sum.Merge(r)
+	sum.Merge(r)
+	if sum.Locked != 6 || sum.Denied != 2 {
+		t.Errorf("merged locked=%d denied=%d", sum.Locked, sum.Denied)
+	}
+
+	// Seen as someone else, everything is foreign rather than locked.
+	saved := uid
+	uid = saved + 1
+	defer func() { uid = saved }()
+	r = Dir(root, nil)
+	if r.Foreign == 0 || r.Locked != 0 {
+		t.Errorf("as another user: foreign=%d locked=%d", r.Foreign, r.Locked)
+	}
+}

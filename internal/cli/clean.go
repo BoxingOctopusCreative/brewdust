@@ -16,14 +16,17 @@ func newCleanCmd(ff *filterFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "clean",
 		Aliases: []string{"cleanup"},
-		Short:   "Remove old versions, orphaned dependencies and broken casks",
-		Long: `Clean up three kinds of leftovers:
+		Short:   "Remove old versions, orphaned dependencies, broken casks and kegs with no formula",
+		Long: `Clean up four kinds of leftovers:
 
-  old      non-current formula versions (brew cleanup <formula>...) and stale
-           Caskroom version directories, including interrupted upgrades,
-           which brew cleanup doesn't remove
-  orphans  dependencies nothing installed needs anymore (brew autoremove)
-  broken   casks whose app was deleted outside brew (brew uninstall --cask)
+  old        non-current formula versions (brew cleanup <formula>...) and stale
+             Caskroom version directories, including interrupted upgrades,
+             which brew cleanup doesn't remove
+  orphans    dependencies nothing installed needs anymore (brew autoremove)
+  broken     casks whose app was deleted outside brew (brew uninstall --cask)
+  noformula  kegs whose formula brew can't find anymore (brew uninstall
+             --formula), and empty Cellar directories, unless something
+             installed still needs them
 
 The plan is shown first, and nothing runs until you confirm.`,
 		Example: `  brewdust clean --dry-run
@@ -43,6 +46,6 @@ The plan is shown first, and nothing runs until you confirm.`,
 		},
 	}
 	rf.register(cmd)
-	cmd.Flags().StringVar(&only, "only", "", "comma-separated categories: old, orphans, broken (default all)")
+	cmd.Flags().StringVar(&only, "only", "", "comma-separated categories: old, orphans, broken, noformula (default all)")
 	return cmd
 }
